@@ -89,14 +89,12 @@ pub struct PathExtractor {
     ctm: Matrix,
     /// Page resources for XObject resolution (Issue #40)
     resources: Option<crate::object::Object>,
-    /// Document reference for loading XObjects (Issue #40)
-    /// This is a raw pointer because we need to call mutable methods on the document
-    /// during XObject processing. It's safe because:
-    /// 1. The extraction process is synchronous (no threading)
-    /// 2. The document's lifetime exceeds the extractor's
-    document: Option<*mut crate::document::PdfDocument>,
-    /// Processed XObjects to prevent infinite loops (Issue #40)
-    processed_xobjects: std::collections::HashSet<crate::object::ObjectRef>,
+    /// Stack of XObjects being processed to detect cycles (Issue #40, #2)
+    /// Uses a call stack approach instead of global "processed" set to allow
+    /// the same XObject to be extracted at different transformations
+    xobject_processing_stack: Vec<crate::object::ObjectRef>,
+    /// Maximum XObject nesting depth (prevent stack overflow)
+    max_xobject_depth: usize,
 }
 
 impl PathExtractor {
@@ -114,8 +112,8 @@ impl PathExtractor {
             current_line_join: LineJoin::Miter,
             ctm: Matrix::identity(),
             resources: None,
-            document: None,
-            processed_xobjects: std::collections::HashSet::new(),
+            xobject_processing_stack: Vec::new(),
+            max_xobject_depth: 100, // Prevent infinite recursion
         }
     }
 
@@ -124,24 +122,33 @@ impl PathExtractor {
         self.resources = Some(resources);
     }
 
-    /// Set the document reference for XObject access (Issue #40).
-    pub fn set_document(&mut self, document: *mut crate::document::PdfDocument) {
-        self.document = Some(document);
-    }
-
     /// Get the page resources if available.
     pub(crate) fn get_resources(&self) -> Option<&crate::object::Object> {
         self.resources.as_ref()
     }
 
-    /// Check if an XObject has already been processed (Issue #40).
-    pub(crate) fn is_xobject_processed(&self, xobject_ref: crate::object::ObjectRef) -> bool {
-        self.processed_xobjects.contains(&xobject_ref)
+    /// Check if an XObject is already in the processing stack (cycle detection)
+    /// and if we haven't exceeded maximum nesting depth (Issue #40, #2).
+    pub(crate) fn can_process_xobject(&self, xobject_ref: crate::object::ObjectRef) -> bool {
+        // Check if already in processing stack (would cause infinite recursion)
+        if self.xobject_processing_stack.contains(&xobject_ref) {
+            return false;
+        }
+        // Check if we've exceeded maximum nesting depth
+        if self.xobject_processing_stack.len() >= self.max_xobject_depth {
+            return false;
+        }
+        true
     }
 
-    /// Mark an XObject as processed to prevent infinite loops (Issue #40).
-    pub(crate) fn mark_xobject_processed(&mut self, xobject_ref: crate::object::ObjectRef) {
-        self.processed_xobjects.insert(xobject_ref);
+    /// Push an XObject onto the processing stack (called before processing).
+    pub(crate) fn push_xobject(&mut self, xobject_ref: crate::object::ObjectRef) {
+        self.xobject_processing_stack.push(xobject_ref);
+    }
+
+    /// Pop an XObject from the processing stack (called after processing).
+    pub(crate) fn pop_xobject(&mut self) {
+        self.xobject_processing_stack.pop();
     }
 
     /// Update the current transformation matrix.

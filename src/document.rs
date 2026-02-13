@@ -2755,10 +2755,15 @@ impl PdfDocument {
         let mut extractor = PathExtractor::new();
         let mut state_stack = GraphicsStateStack::new();
 
-        // Set resources and document for XObject processing (Issue #40)
+        // Set resources for XObject processing (Issue #40)
+        // Handle indirect references to Resources (Issue #1)
         if let Some(resources) = page_dict.get("Resources") {
-            extractor.set_resources(resources.clone());
-            extractor.set_document(self as *mut PdfDocument);
+            let resolved_resources = if let Some(ref_obj) = resources.as_reference() {
+                self.load_object(ref_obj)?
+            } else {
+                resources.clone()
+            };
+            extractor.set_resources(resolved_resources);
         }
 
         // Process each operator
@@ -2976,31 +2981,48 @@ impl PdfDocument {
             None => return Ok(()),
         };
 
-        // Check if already processed (prevent infinite loops)
-        if extractor.is_xobject_processed(xobject_ref) {
+        // Check if we can process this XObject (prevent infinite recursion) - Issue #2
+        if !extractor.can_process_xobject(xobject_ref) {
             return Ok(());
         }
-        extractor.mark_xobject_processed(xobject_ref);
+        extractor.push_xobject(xobject_ref);
 
         // Load XObject
-        let xobject = self.load_object(xobject_ref)?;
-        let xobject_dict = xobject.as_dict().ok_or_else(|| Error::ParseError {
-            offset: 0,
-            reason: "XObject is not a dictionary".to_string(),
-        })?;
+        let xobject = match self.load_object(xobject_ref) {
+            Ok(obj) => obj,
+            Err(e) => {
+                extractor.pop_xobject();
+                return Err(e);
+            }
+        };
+        let xobject_dict = match xobject.as_dict() {
+            Some(dict) => dict,
+            None => {
+                extractor.pop_xobject();
+                return Err(Error::ParseError {
+                    offset: 0,
+                    reason: "XObject is not a dictionary".to_string(),
+                });
+            }
+        };
 
         // Check type - only process Form XObjects, skip Images
         match xobject_dict.get("Subtype") {
             Some(subtype_obj) => {
                 if let Some(subtype_name) = subtype_obj.as_name() {
                     if subtype_name != "Form" {
+                        extractor.pop_xobject();
                         return Ok(()); // Not a Form XObject, skip
                     }
                 } else {
+                    extractor.pop_xobject();
                     return Ok(());
                 }
             },
-            None => return Ok(()),
+            None => {
+                extractor.pop_xobject();
+                return Ok(());
+            }
         }
 
         // Get and decode the stream
@@ -3178,6 +3200,9 @@ impl PdfDocument {
         // Restore graphics state
         state_stack.restore();
         extractor.update_from_state(state_stack.current());
+
+        // Pop from XObject processing stack
+        extractor.pop_xobject();
 
         Ok(())
     }
@@ -4331,20 +4356,31 @@ pub fn parse_header<R: Read + Seek>(reader: &mut R, lenient: bool) -> Result<(u8
 
     // Read first 8 bytes for fast path (header at byte 0)
     let mut header = [0u8; 8];
-    match reader.read_exact(&mut header) {
+    let strict_read_ok = match reader.read_exact(&mut header) {
         Ok(_) => {
             // Check if header is at position 0
             if &header[0..5] == b"%PDF-" {
                 return parse_version_from_header(&header).map(|(major, minor)| (major, minor, 0));
             }
+            true
         },
-        Err(_) => {
-            // File too short, will fail below
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                // File too short for PDF header
+                if !lenient {
+                    return Err(Error::InvalidHeader(
+                        "File too short for PDF header (expected at least 8 bytes)".to_string(),
+                    ));
+                }
+                false
+            } else {
+                return Err(Error::InvalidHeader(format!("Failed to read file: {}", e)));
+            }
         },
-    }
+    };
 
-    // If strict mode, fail immediately
-    if !lenient {
+    // If strict mode and first 8 bytes read, fail immediately
+    if !lenient && strict_read_ok {
         return Err(Error::InvalidHeader(format!(
             "Expected '%PDF-' at byte 0, found '{}'",
             String::from_utf8_lossy(&header[0..5])
@@ -4357,11 +4393,17 @@ pub fn parse_header<R: Read + Seek>(reader: &mut R, lenient: bool) -> Result<(u8
     // Read up to 1024 bytes
     let mut buffer = vec![0u8; 1024];
     let bytes_read = match reader.read(&mut buffer) {
-        Ok(n) => n,
-        Err(_) => {
+        Ok(0) => {
             return Err(Error::InvalidHeader(
-                "Could not read file to search for PDF header".to_string(),
+                "File is empty (0 bytes read)".to_string(),
             ))
+        },
+        Ok(n) => n,
+        Err(e) => {
+            return Err(Error::InvalidHeader(format!(
+                "I/O error while searching for PDF header: {}",
+                e
+            )))
         },
     };
 
