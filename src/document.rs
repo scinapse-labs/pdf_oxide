@@ -636,8 +636,10 @@ impl PdfDocument {
                         return result;
                     },
                     Err(_) => {
-                        // File scan also failed
-                        return Err(Error::ObjectNotFound(obj_ref.id, obj_ref.gen));
+                        // PDF Spec §7.3.10: missing object reference "shall be treated as null"
+                        log::warn!("Object {} gen {} not found (xref + file scan failed), treating as Null per §7.3.10", obj_ref.id, obj_ref.gen);
+                        self.object_cache.insert(obj_ref, Object::Null);
+                        return Ok(Object::Null);
                     },
                 }
             },
@@ -674,10 +676,23 @@ impl PdfDocument {
                     );
                     // Fall through to loading logic below
                 } else {
-                    return Err(Error::ObjectNotFound(obj_ref.id, obj_ref.gen));
+                    // PDF Spec §7.3.10: treat as null
+                    log::warn!(
+                        "Free object {} (id <= 10, bad offset), treating as Null",
+                        obj_ref.id
+                    );
+                    self.object_cache.insert(obj_ref, Object::Null);
+                    return Ok(Object::Null);
                 }
             } else {
-                return Err(Error::ObjectNotFound(obj_ref.id, obj_ref.gen));
+                // PDF Spec §7.3.10: free object treated as null
+                log::warn!(
+                    "Free object {} gen {}, treating as Null per §7.3.10",
+                    obj_ref.id,
+                    obj_ref.gen
+                );
+                self.object_cache.insert(obj_ref, Object::Null);
+                return Ok(Object::Null);
             }
         }
 
@@ -708,8 +723,13 @@ impl PdfDocument {
             },
             XRefEntryType::Free => {
                 // Free object - shouldn't happen since we check in_use above
-                log::warn!("Object {} has type Free despite in_use=true", obj_ref.id);
-                Err(Error::ObjectNotFound(obj_ref.id, obj_ref.gen))
+                // PDF Spec §7.3.10: treat as null
+                log::warn!(
+                    "Object {} has type Free despite in_use=true, treating as Null",
+                    obj_ref.id
+                );
+                self.object_cache.insert(obj_ref, Object::Null);
+                Ok(Object::Null)
             },
         };
 
@@ -1045,10 +1065,19 @@ impl PdfDocument {
         let stream_ref = ObjectRef::new(stream_obj_num, 0);
         let stream_obj = self.load_uncompressed_object(stream_ref, {
             // Look up the stream's offset in the xref table
-            let stream_entry = self
-                .xref
-                .get(stream_obj_num)
-                .ok_or(Error::ObjectNotFound(stream_obj_num, 0))?;
+            let stream_entry = match self.xref.get(stream_obj_num) {
+                Some(entry) => entry,
+                None => {
+                    // PDF Spec §7.3.10: treat as null
+                    log::warn!(
+                        "Object stream {} not in xref, treating compressed object {} as Null",
+                        stream_obj_num,
+                        obj_ref.id
+                    );
+                    self.object_cache.insert(obj_ref, Object::Null);
+                    return Ok(Object::Null);
+                },
+            };
 
             if stream_entry.entry_type != crate::xref::XRefEntryType::Uncompressed {
                 return Err(Error::InvalidPdf(format!(
@@ -1072,10 +1101,18 @@ impl PdfDocument {
         };
 
         // Extract the requested object
-        let obj = objects_map
-            .get(&obj_ref.id)
-            .ok_or(Error::ObjectNotFound(obj_ref.id, obj_ref.gen))?
-            .clone();
+        let obj = match objects_map.get(&obj_ref.id) {
+            Some(o) => o.clone(),
+            None => {
+                // PDF Spec §7.3.10: treat as null
+                log::warn!(
+                    "Object {} not found in object stream {}, treating as Null",
+                    obj_ref.id,
+                    stream_obj_num
+                );
+                Object::Null
+            },
+        };
 
         // Cache all objects from the stream for future access
         for (obj_num, object) in objects_map {
@@ -1407,7 +1444,7 @@ impl PdfDocument {
         let catalog = self.catalog()?;
         let catalog_dict = catalog.as_dict().ok_or_else(|| Error::InvalidObjectType {
             expected: "Dictionary".to_string(),
-            found: "Other".to_string(),
+            found: catalog.type_name().to_string(),
         })?;
 
         // Get /Pages reference
@@ -1419,12 +1456,16 @@ impl PdfDocument {
 
         // Load page tree root
         let pages_obj = self.load_object(pages_ref)?;
-        let pages_dict = pages_obj
-            .as_dict()
-            .ok_or_else(|| Error::InvalidObjectType {
-                expected: "Dictionary".to_string(),
-                found: "Other".to_string(),
-            })?;
+        let pages_dict = match pages_obj.as_dict() {
+            Some(d) => d,
+            None => {
+                log::warn!(
+                    "Page tree root is {} (expected Dictionary), treating as 0 pages",
+                    pages_obj.type_name()
+                );
+                return Ok(0);
+            },
+        };
 
         // Get /Count
         let count = pages_dict
@@ -1442,7 +1483,7 @@ impl PdfDocument {
         let catalog = self.catalog()?;
         let catalog_dict = catalog.as_dict().ok_or_else(|| Error::InvalidObjectType {
             expected: "Dictionary".to_string(),
-            found: "Other".to_string(),
+            found: catalog.type_name().to_string(),
         })?;
 
         // Get /Pages reference
@@ -1566,7 +1607,7 @@ impl PdfDocument {
         let catalog = self.catalog()?;
         let catalog_dict = catalog.as_dict().ok_or_else(|| Error::InvalidObjectType {
             expected: "Dictionary".to_string(),
-            found: "Other".to_string(),
+            found: catalog.type_name().to_string(),
         })?;
 
         // Get /Pages reference
@@ -1591,6 +1632,7 @@ impl PdfDocument {
                     Error::InvalidPdf(_)
                         | Error::InvalidObjectType { .. }
                         | Error::CircularReference(_)
+                        | Error::ObjectNotFound(_, _)
                 ) {
                     log::warn!("Page tree traversal failed ({}), trying fallback scan method", e);
                     self.get_page_by_scanning(page_index)
@@ -1633,7 +1675,7 @@ impl PdfDocument {
         }
 
         // Second pass: heuristic detection for pages without /Type entry
-        // Look for dicts with /MediaBox or /Contents but no /Type
+        // Look for dicts with /MediaBox, /Contents, /Resources, or /Parent but no /Type
         if current_index == 0 {
             let mut heuristic_index = 0;
             for &obj_num in &obj_nums {
@@ -1642,17 +1684,69 @@ impl PdfDocument {
                     gen: 0,
                 }) {
                     if let Some(dict) = obj.as_dict() {
-                        if dict.get("Type").is_none()
-                            && (dict.contains_key("MediaBox") || dict.contains_key("Contents"))
+                        let has_no_type = dict.get("Type").is_none();
+                        // Also handle /Type that is an unresolvable reference (Null)
+                        let type_is_null =
+                            dict.get("Type").is_some_and(|t| matches!(t, Object::Null));
+                        if (has_no_type || type_is_null)
+                            && (dict.contains_key("MediaBox")
+                                || dict.contains_key("Contents")
+                                || (dict.contains_key("Resources") && dict.contains_key("Parent")))
                         {
                             log::debug!(
-                                "Heuristic page candidate: object {} (has MediaBox/Contents but no /Type)",
+                                "Heuristic page candidate: object {} (page-like keys without valid /Type)",
                                 obj_num
                             );
                             if heuristic_index == target_index {
                                 return Ok(obj);
                             }
                             heuristic_index += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Third pass: try resolving /Kids from catalog's /Pages root directly
+        if current_index == 0 {
+            if let Ok(catalog) = self.catalog() {
+                if let Some(catalog_dict) = catalog.as_dict() {
+                    if let Some(pages_ref) =
+                        catalog_dict.get("Pages").and_then(|p| p.as_reference())
+                    {
+                        if let Ok(pages_obj) = self.load_object(pages_ref) {
+                            if let Some(pages_dict) = pages_obj.as_dict() {
+                                if let Some(kids) =
+                                    pages_dict.get("Kids").and_then(|k| k.as_array())
+                                {
+                                    let mut kids_index = 0;
+                                    for kid in kids {
+                                        if let Some(kid_ref) = kid.as_reference() {
+                                            // Skip self-referencing kids (cycle detection)
+                                            if kid_ref == pages_ref {
+                                                continue;
+                                            }
+                                            if let Ok(kid_obj) = self.load_object(kid_ref) {
+                                                if let Some(kid_dict) = kid_obj.as_dict() {
+                                                    // Skip intermediate /Pages nodes
+                                                    let is_pages_node = kid_dict
+                                                        .get("Type")
+                                                        .and_then(|t| t.as_name())
+                                                        .is_some_and(|n| n == "Pages");
+                                                    if is_pages_node {
+                                                        continue;
+                                                    }
+                                                    if kids_index == target_index {
+                                                        log::debug!("Found page {} via direct /Kids resolution of object {}", target_index, kid_ref.id);
+                                                        return Ok(kid_obj);
+                                                    }
+                                                    kids_index += 1;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1698,10 +1792,21 @@ impl PdfDocument {
             return Err(Error::CircularReference(node_ref));
         }
         let node = self.load_object(node_ref)?;
-        let node_dict = node.as_dict().ok_or_else(|| Error::InvalidObjectType {
-            expected: "Dictionary".to_string(),
-            found: "Other".to_string(),
-        })?;
+        let node_dict = match node.as_dict() {
+            Some(d) => d,
+            None => {
+                // Null or non-dict node in page tree — skip it
+                log::warn!(
+                    "Page tree node {} is {} (expected Dictionary), skipping",
+                    node_ref.id,
+                    node.type_name()
+                );
+                return Err(Error::InvalidPdf(format!(
+                    "Page tree node {} is not a dictionary",
+                    node_ref.id
+                )));
+            },
+        };
 
         // Check if this is a page or pages node
         let node_type = node_dict
@@ -1815,7 +1920,7 @@ impl PdfDocument {
         let catalog = self.catalog()?;
         let catalog_dict = catalog.as_dict().ok_or_else(|| Error::InvalidObjectType {
             expected: "Dictionary".to_string(),
-            found: "Other".to_string(),
+            found: catalog.type_name().to_string(),
         })?;
 
         let pages_ref = catalog_dict
@@ -1839,10 +1944,20 @@ impl PdfDocument {
             return Err(Error::CircularReference(node_ref));
         }
         let node = self.load_object(node_ref)?;
-        let node_dict = node.as_dict().ok_or_else(|| Error::InvalidObjectType {
-            expected: "Dictionary".to_string(),
-            found: "Other".to_string(),
-        })?;
+        let node_dict = match node.as_dict() {
+            Some(d) => d,
+            None => {
+                log::warn!(
+                    "Page tree node {} is {} (expected Dictionary), skipping",
+                    node_ref.id,
+                    node.type_name()
+                );
+                return Err(Error::InvalidPdf(format!(
+                    "Page tree node {} is not a dictionary",
+                    node_ref.id
+                )));
+            },
+        };
 
         let node_type = node_dict
             .get("Type")
@@ -2443,17 +2558,43 @@ impl PdfDocument {
             reason: "Page is not a dictionary".to_string(),
         })?;
 
-        // Get content stream data (reuse the same logic as extract_chars)
-        let content_data = self.get_page_content_data(page_index)?;
+        // Get content stream data — skip page on decode failure (Annex I)
+        let content_data = match self.get_page_content_data(page_index) {
+            Ok(data) => data,
+            Err(e) => {
+                log::warn!(
+                    "Failed to decode content stream for page {}: {}, returning empty",
+                    page_index,
+                    e
+                );
+                return Ok(Vec::new());
+            },
+        };
 
         // First pass: Extract with conservative thresholds to analyze document
         let mut initial_extractor = TextExtractor::new();
         if let Some(resources) = page_dict.get("Resources") {
             initial_extractor.set_resources(resources.clone());
             initial_extractor.set_document(self as *mut PdfDocument);
-            self.load_fonts(resources, &mut initial_extractor)?;
+            if let Err(e) = self.load_fonts(resources, &mut initial_extractor) {
+                log::warn!(
+                    "Failed to load fonts for page {}: {}, continuing with defaults",
+                    page_index,
+                    e
+                );
+            }
         }
-        let initial_spans = initial_extractor.extract_text_spans(&content_data)?;
+        let initial_spans = match initial_extractor.extract_text_spans(&content_data) {
+            Ok(spans) => spans,
+            Err(e) => {
+                log::warn!(
+                    "Failed to extract text spans for page {}: {}, returning empty",
+                    page_index,
+                    e
+                );
+                return Ok(Vec::new());
+            },
+        };
 
         // Classify document type based on extracted content
         // Convert TextSpans to text lines for classification
@@ -2484,7 +2625,13 @@ impl PdfDocument {
             final_extractor.set_document(self as *mut PdfDocument);
 
             // Load fonts
-            self.load_fonts(resources, &mut final_extractor)?;
+            if let Err(e) = self.load_fonts(resources, &mut final_extractor) {
+                log::warn!(
+                    "Failed to load fonts for final extraction on page {}: {}",
+                    page_index,
+                    e
+                );
+            }
         }
 
         // Extract text spans with profile-optimized thresholds
@@ -2533,8 +2680,18 @@ impl PdfDocument {
             reason: "Page is not a dictionary".to_string(),
         })?;
 
-        // Get content stream data
-        let content_data = self.get_page_content_data(page_index)?;
+        // Get content stream data — skip page on decode failure (Annex I)
+        let content_data = match self.get_page_content_data(page_index) {
+            Ok(data) => data,
+            Err(e) => {
+                log::warn!(
+                    "Failed to decode content stream for page {}: {}, returning empty",
+                    page_index,
+                    e
+                );
+                return Ok(Vec::new());
+            },
+        };
 
         // Create text extractor with merged configuration
         let mut extractor = TextExtractor::new().with_merging_config(config);
@@ -2545,7 +2702,13 @@ impl PdfDocument {
             extractor.set_document(self as *mut PdfDocument);
 
             // Load fonts
-            self.load_fonts(resources, &mut extractor)?;
+            if let Err(e) = self.load_fonts(resources, &mut extractor) {
+                log::warn!(
+                    "Failed to load fonts for page {}: {}, continuing with defaults",
+                    page_index,
+                    e
+                );
+            }
         }
 
         // Extract text spans
@@ -2601,8 +2764,18 @@ impl PdfDocument {
             reason: "Page is not a dictionary".to_string(),
         })?;
 
-        // Get content stream data
-        let content_data = self.get_page_content_data(page_index)?;
+        // Get content stream data — skip page on decode failure (Annex I)
+        let content_data = match self.get_page_content_data(page_index) {
+            Ok(data) => data,
+            Err(e) => {
+                log::warn!(
+                    "Failed to decode content stream for page {}: {}, returning empty",
+                    page_index,
+                    e
+                );
+                return Ok(Vec::new());
+            },
+        };
 
         // Create text extractor for character-level extraction
         let mut extractor = TextExtractor::new();
@@ -2613,7 +2786,13 @@ impl PdfDocument {
             extractor.set_document(self as *mut PdfDocument);
 
             // Load fonts
-            self.load_fonts(resources, &mut extractor)?;
+            if let Err(e) = self.load_fonts(resources, &mut extractor) {
+                log::warn!(
+                    "Failed to load fonts for page {}: {}, continuing with defaults",
+                    page_index,
+                    e
+                );
+            }
         }
 
         // Extract characters directly (single-pass, no document classification)
@@ -2777,15 +2956,25 @@ impl PdfDocument {
                     if matches!(content_item, Object::Null) {
                         continue;
                     }
-                    if let Some(ref_val) = content_item.as_reference() {
-                        let content_obj = self.load_object(ref_val)?;
-                        let decoded = self.decode_stream_with_encryption(&content_obj, ref_val)?;
-                        combined.extend_from_slice(&decoded);
-                        combined.push(b'\n');
-                    } else {
-                        let decoded = content_item.decode_stream_data()?;
-                        combined.extend_from_slice(&decoded);
-                        combined.push(b'\n');
+                    match (|| -> Result<Vec<u8>> {
+                        if let Some(ref_val) = content_item.as_reference() {
+                            let content_obj = self.load_object(ref_val)?;
+                            self.decode_stream_with_encryption(&content_obj, ref_val)
+                        } else {
+                            content_item.decode_stream_data()
+                        }
+                    })() {
+                        Ok(decoded) => {
+                            combined.extend_from_slice(&decoded);
+                            combined.push(b'\n');
+                        },
+                        Err(e) => {
+                            log::warn!(
+                                "Failed to decode content stream element on page {}: {}, skipping",
+                                page_index,
+                                e
+                            );
+                        },
                     }
                 }
 
@@ -2803,15 +2992,25 @@ impl PdfDocument {
                 if matches!(content_item, Object::Null) {
                     continue;
                 }
-                if let Some(ref_val) = content_item.as_reference() {
-                    let content_obj = self.load_object(ref_val)?;
-                    let decoded = self.decode_stream_with_encryption(&content_obj, ref_val)?;
-                    combined.extend_from_slice(&decoded);
-                    combined.push(b'\n');
-                } else {
-                    let decoded = content_item.decode_stream_data()?;
-                    combined.extend_from_slice(&decoded);
-                    combined.push(b'\n');
+                match (|| -> Result<Vec<u8>> {
+                    if let Some(ref_val) = content_item.as_reference() {
+                        let content_obj = self.load_object(ref_val)?;
+                        self.decode_stream_with_encryption(&content_obj, ref_val)
+                    } else {
+                        content_item.decode_stream_data()
+                    }
+                })() {
+                    Ok(decoded) => {
+                        combined.extend_from_slice(&decoded);
+                        combined.push(b'\n');
+                    },
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to decode content stream element on page {}: {}, skipping",
+                            page_index,
+                            e
+                        );
+                    },
                 }
             }
 
@@ -2876,10 +3075,32 @@ impl PdfDocument {
             offset: 0,
             reason: "Page is not a dictionary".to_string(),
         })?;
-        let content_data = self.get_page_content_data(page_index)?;
+
+        // Get content stream data — skip page on decode failure (Annex I)
+        let content_data = match self.get_page_content_data(page_index) {
+            Ok(data) => data,
+            Err(e) => {
+                log::warn!(
+                    "Failed to decode content stream for page {}: {}, returning empty paths",
+                    page_index,
+                    e
+                );
+                return Ok(Vec::new());
+            },
+        };
 
         // Parse content stream into operators
-        let operators = parse_content_stream(&content_data)?;
+        let operators = match parse_content_stream(&content_data) {
+            Ok(ops) => ops,
+            Err(e) => {
+                log::warn!(
+                    "Failed to parse content stream for page {}: {}, returning empty paths",
+                    page_index,
+                    e
+                );
+                return Ok(Vec::new());
+            },
+        };
 
         // Create path extractor and graphics state stack
         let mut extractor = PathExtractor::new();
@@ -3538,10 +3759,16 @@ impl PdfDocument {
             resources.clone()
         };
 
-        let resources_dict = resources_obj.as_dict().ok_or_else(|| Error::ParseError {
-            offset: 0,
-            reason: "Resources is not a dictionary".to_string(),
-        })?;
+        let resources_dict = match resources_obj.as_dict() {
+            Some(d) => d,
+            None => {
+                log::warn!(
+                    "Resources is not a dictionary (type: {}), treating as empty",
+                    resources_obj.type_name()
+                );
+                return Ok(());
+            },
+        };
 
         // Get Font dictionary if present
         if let Some(font_obj) = resources_dict.get("Font") {
@@ -4439,10 +4666,16 @@ impl PdfDocument {
         let mut images = Vec::new();
 
         // Get XObject dictionary
-        let resources_dict = resources.as_dict().ok_or_else(|| Error::ParseError {
-            offset: 0,
-            reason: "Resources is not a dictionary".to_string(),
-        })?;
+        let resources_dict = match resources.as_dict() {
+            Some(d) => d,
+            None => {
+                log::warn!(
+                    "Resources is not a dictionary (type: {}), treating as empty",
+                    resources.type_name()
+                );
+                return Ok(images);
+            },
+        };
 
         let xobject_obj = match resources_dict.get("XObject") {
             Some(obj) => obj,
@@ -4869,7 +5102,7 @@ pub fn parse_header<R: Read + Seek>(reader: &mut R, lenient: bool) -> Result<(u8
         Ok(_) => {
             // Check if header is at position 0
             if &header[0..5] == b"%PDF-" {
-                return parse_version_from_header(&header, false)
+                return parse_version_from_header(&header, lenient)
                     .map(|(major, minor)| (major, minor, 0));
             }
             true
