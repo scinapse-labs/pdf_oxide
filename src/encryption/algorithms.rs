@@ -949,7 +949,14 @@ mod tests {
 
         // Owner password should authenticate
         let result = authenticate_owner_password(
-            owner_pass, &user_hash, &owner_hash, permissions, file_id, revision, key_length, true,
+            owner_pass,
+            &user_hash,
+            &owner_hash,
+            permissions,
+            file_id,
+            revision,
+            key_length,
+            true,
         );
         assert!(result.is_some());
         assert_eq!(result.unwrap(), encryption_key);
@@ -977,7 +984,14 @@ mod tests {
         let user_hash = compute_user_password_hash(&encryption_key, file_id, revision);
 
         let result = authenticate_owner_password(
-            owner_pass, &user_hash, &owner_hash, permissions, file_id, revision, key_length, true,
+            owner_pass,
+            &user_hash,
+            &owner_hash,
+            permissions,
+            file_id,
+            revision,
+            key_length,
+            true,
         );
         assert!(result.is_some());
         assert_eq!(result.unwrap(), encryption_key);
@@ -1005,7 +1019,14 @@ mod tests {
         let user_hash = compute_user_password_hash(&encryption_key, file_id, revision);
 
         let result = authenticate_owner_password(
-            b"wrong", &user_hash, &owner_hash, permissions, file_id, revision, key_length, true,
+            b"wrong",
+            &user_hash,
+            &owner_hash,
+            permissions,
+            file_id,
+            revision,
+            key_length,
+            true,
         );
         assert!(result.is_none());
     }
@@ -1031,9 +1052,8 @@ mod tests {
         owner_key.extend_from_slice(&owner_validation_salt);
         owner_key.extend_from_slice(&owner_key_salt);
 
-        let result = authenticate_owner_password(
-            password, &user_key, &owner_key, -1, b"", 5, 32, true,
-        );
+        let result =
+            authenticate_owner_password(password, &user_key, &owner_key, -1, b"", 5, 32, true);
         assert!(result.is_some());
 
         // Verify the returned key is SHA-256(password || owner_key_salt || U[0..48])
@@ -1062,9 +1082,8 @@ mod tests {
         owner_key.extend_from_slice(&owner_validation_salt);
         owner_key.extend_from_slice(&owner_key_salt);
 
-        let result = authenticate_owner_password(
-            b"wrong", &user_key, &owner_key, -1, b"", 5, 32, true,
-        );
+        let result =
+            authenticate_owner_password(b"wrong", &user_key, &owner_key, -1, b"", 5, 32, true);
         assert!(result.is_none());
     }
 }

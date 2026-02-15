@@ -307,12 +307,7 @@ fn parse_k_children(
                     }
                 },
                 Err(e) => {
-                    log::warn!(
-                        "Failed to resolve ObjectRef {} {}: {}",
-                        obj_ref.id,
-                        obj_ref.gen,
-                        e
-                    );
+                    log::warn!("Failed to resolve ObjectRef {} {}: {}", obj_ref.id, obj_ref.gen, e);
                 },
             }
         },

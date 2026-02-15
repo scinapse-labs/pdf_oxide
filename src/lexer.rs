@@ -437,17 +437,11 @@ fn parse_keyword(input: &[u8]) -> IResult<&[u8], Token<'_>> {
 /// preventing false matches on operator names like `RG`, `Re`, `RI`.
 fn parse_r_token(input: &[u8]) -> IResult<&[u8], Token<'_>> {
     if input.first() != Some(&b'R') {
-        return Err(nom::Err::Error(nom::error::Error::new(
-            input,
-            nom::error::ErrorKind::Tag,
-        )));
+        return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
     }
     // Ensure R is not followed by an alphabetic character
     if input.len() > 1 && input[1].is_ascii_alphabetic() {
-        return Err(nom::Err::Error(nom::error::Error::new(
-            input,
-            nom::error::ErrorKind::Tag,
-        )));
+        return Err(nom::Err::Error(nom::error::Error::new(input, nom::error::ErrorKind::Tag)));
     }
     Ok((&input[1..], Token::R))
 }

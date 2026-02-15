@@ -1213,7 +1213,12 @@ impl PdfXValidator {
                 _ => None,
             }
         };
-        Some([to_f64(&arr[0])?, to_f64(&arr[1])?, to_f64(&arr[2])?, to_f64(&arr[3])?])
+        Some([
+            to_f64(&arr[0])?,
+            to_f64(&arr[1])?,
+            to_f64(&arr[2])?,
+            to_f64(&arr[3])?,
+        ])
     }
 
     /// Check if outer box fully contains inner box (with 0.01pt tolerance).

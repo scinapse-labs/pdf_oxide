@@ -366,12 +366,7 @@ impl PageRenderer {
                         let transform = combine_transforms(base_transform, &gs.ctm);
                         let mut mask =
                             tiny_skia::Mask::new(pixmap.width(), pixmap.height()).unwrap();
-                        mask.fill_path(
-                            &path,
-                            FillRule::Winding,
-                            false,
-                            transform,
-                        );
+                        mask.fill_path(&path, FillRule::Winding, false, transform);
                         clip_mask = Some(mask);
                     }
                     current_path = PathBuilder::new();
@@ -383,12 +378,7 @@ impl PageRenderer {
                         let transform = combine_transforms(base_transform, &gs.ctm);
                         let mut mask =
                             tiny_skia::Mask::new(pixmap.width(), pixmap.height()).unwrap();
-                        mask.fill_path(
-                            &path,
-                            FillRule::EvenOdd,
-                            false,
-                            transform,
-                        );
+                        mask.fill_path(&path, FillRule::EvenOdd, false, transform);
                         clip_mask = Some(mask);
                     }
                     current_path = PathBuilder::new();
@@ -569,13 +559,7 @@ impl PageRenderer {
                                 },
                                 "Form" => {
                                     self.render_form_xobject(
-                                        pixmap,
-                                        &dict,
-                                        &data,
-                                        transform,
-                                        doc,
-                                        page_num,
-                                        resources,
+                                        pixmap, &dict, &data, transform, doc, page_num, resources,
                                     )?;
                                 },
                                 _ => {},
@@ -649,12 +633,22 @@ impl PageRenderer {
                 match arr.get(i) {
                     Some(Object::Real(v)) => *v as f32,
                     Some(Object::Integer(v)) => *v as f32,
-                    _ => if i == 0 || i == 3 { 1.0 } else { 0.0 },
+                    _ => {
+                        if i == 0 || i == 3 {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    },
                 }
             };
             Transform::from_row(
-                get_f32(0), get_f32(1), get_f32(2),
-                get_f32(3), get_f32(4), get_f32(5),
+                get_f32(0),
+                get_f32(1),
+                get_f32(2),
+                get_f32(3),
+                get_f32(4),
+                get_f32(5),
             )
         } else {
             Transform::identity()

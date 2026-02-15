@@ -980,5 +980,4 @@ mod tests {
         assert_eq!(result.threshold_pt, 0.1);
         assert!(result.stats.is_none());
     }
-
 }

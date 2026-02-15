@@ -408,11 +408,7 @@ fn test_simple_fonts_unaffected() {
     ];
 
     for (feature, required_type) in type0_only_features {
-        assert_eq!(
-            required_type, "Type0",
-            "Feature '{}' only applies to Type0 fonts",
-            feature
-        );
+        assert_eq!(required_type, "Type0", "Feature '{}' only applies to Type0 fonts", feature);
     }
 }
 

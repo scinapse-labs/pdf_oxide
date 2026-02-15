@@ -415,8 +415,7 @@ pub fn validate_embedded_files(
                                 for (idx, item) in names_arr.iter().enumerate() {
                                     if idx % 2 == 1 {
                                         // This is a filespec
-                                        let resolved_fs =
-                                            document.resolve_references(item, 1)?;
+                                        let resolved_fs = document.resolve_references(item, 1)?;
                                         if let Object::Dictionary(fs_dict) = resolved_fs {
                                             if !fs_dict.contains_key("AFRelationship") {
                                                 result.add_error(
