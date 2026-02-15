@@ -4163,7 +4163,17 @@ impl PdfDocument {
 
     /// Extract images from a page.
     ///
-    /// Extracts all images from the specified page's Resources/XObject dictionary.
+    /// Extracts all images from the specified page by processing the content stream.
+    /// This includes:
+    /// - Images referenced via `Do` operators (XObject calls)
+    /// - Images in nested Form XObjects (with recursion)
+    /// - Inline images (BI...ID...EI sequences)
+    ///
+    /// This method processes PDF content streams instead of only iterating the XObject
+    /// dictionary. This ensures that images referenced via the `Do` operator in the content
+    /// stream are properly extracted, including those in nested Form XObjects. ColorSpace
+    /// indirect references are also resolved.
+    ///
     /// Returns a vector of PdfImage objects representing the extracted images.
     ///
     /// # Arguments
@@ -4194,118 +4204,434 @@ impl PdfDocument {
         &mut self,
         page_index: usize,
     ) -> Result<Vec<crate::extractors::PdfImage>> {
-        use crate::extractors::extract_image_from_xobject;
+        use crate::content::parse_content_stream;
+        use crate::content::Operator;
 
-        // Get page object
+        // Get page object and resources
         let page = self.get_page(page_index)?;
         let page_dict = page.as_dict().ok_or_else(|| Error::ParseError {
             offset: 0,
             reason: "Page is not a dictionary".to_string(),
         })?;
 
-        // Get Resources dictionary
+        // Get content stream
+        let content_data = self.get_page_content_data(page_index)?;
+
+        // Resolve resources
         let resources = match page_dict.get("Resources") {
-            Some(res) => res,
-            None => {
-                // No resources, no images
-                return Ok(Vec::new());
-            },
-        };
-
-        let resources_obj = if let Some(res_ref) = resources.as_reference() {
-            self.load_object(res_ref)?
-        } else {
-            resources.clone()
-        };
-
-        let resources_dict = resources_obj.as_dict().ok_or_else(|| Error::ParseError {
-            offset: 0,
-            reason: "Resources is not a dictionary".to_string(),
-        })?;
-
-        // Get XObject dictionary if present
-        let xobject_dict = match resources_dict.get("XObject") {
-            Some(xobj) => {
-                if let Some(xobj_ref) = xobj.as_reference() {
-                    self.load_object(xobj_ref)?
+            Some(res) => {
+                if let Some(ref_obj) = res.as_reference() {
+                    Some(self.load_object(ref_obj)?)
                 } else {
-                    xobj.clone()
+                    Some(res.clone())
                 }
             },
-            None => {
-                // No XObject dictionary, no images
+            None => None,
+        };
+
+        // Parse content stream and extract images
+        let operators = match parse_content_stream(&content_data) {
+            Ok(ops) => ops,
+            Err(_) => {
+                // If content stream parsing fails, return empty
                 return Ok(Vec::new());
             },
         };
 
-        let xobject_dict = xobject_dict.as_dict().ok_or_else(|| Error::ParseError {
-            offset: 0,
-            reason: "XObject is not a dictionary".to_string(),
-        })?;
-
-        // Extract all image XObjects
         let mut images = Vec::new();
-        for xobj in xobject_dict.values() {
-            // XObject can be a reference or direct object
-            let xobj_loaded = if let Some(xobj_ref) = xobj.as_reference() {
-                self.load_object(xobj_ref)?
-            } else {
-                xobj.clone()
-            };
+        let mut ctm_stack = vec![crate::content::Matrix::identity()];
 
-            // Check if this XObject is an Image (not Form or other types)
-            if let Some(dict) = xobj_loaded.as_dict() {
-                if let Some(subtype) = dict.get("Subtype").and_then(|s| s.as_name()) {
-                    if subtype == "Image" {
-                        // Extract the image
-                        let obj_ref = xobj.as_reference();
-                        match extract_image_from_xobject(Some(self), &xobj_loaded, obj_ref) {
-                            Ok(image) => images.push(image),
+        // Parse content stream operators to extract images from Do operators
+        // Instead of only checking the XObject dictionary, we parse the actual page content
+        // stream to find Do operators that reference images. This is how real PDFs work -
+        // images are embedded as XObjects and referenced via "Do" operators in the content stream.
+        for op in operators {
+            match op {
+                // Graphics state operators
+                Operator::SaveState => {
+                    if let Some(current_ctm) = ctm_stack.last() {
+                        ctm_stack.push(*current_ctm);
+                    }
+                },
+                Operator::RestoreState => {
+                    if ctm_stack.len() > 1 {
+                        ctm_stack.pop();
+                    }
+                },
+                Operator::Cm { a, b, c, d, e, f } => {
+                    if let Some(current_ctm) = ctm_stack.last_mut() {
+                        let matrix = crate::content::Matrix { a, b, c, d, e, f };
+                        *current_ctm = current_ctm.multiply(&matrix);
+                    }
+                },
+
+                // XObject reference operator - Extract images referenced via Do
+                // The "Do" operator tells the renderer: "Draw the named XObject now"
+                // We extract all images referenced this way
+                Operator::Do { name } => {
+                    if let Some(ref res) = resources {
+                        let current_ctm = ctm_stack.last().copied().unwrap_or_else(crate::content::Matrix::identity);
+                        match self.extract_images_from_xobject_do(&name, res, current_ctm) {
+                            Ok(mut xobj_images) => {
+                                images.append(&mut xobj_images);
+                            },
                             Err(_) => {
-                                // Skip images that fail to extract
-                                continue;
                             },
                         }
+                    } else {
                     }
-                }
+                },
+
+                // Inline image operator
+                Operator::InlineImage { dict, data } => {
+                    let current_ctm = ctm_stack.last().copied().unwrap_or_else(crate::content::Matrix::identity);
+                    if let Ok(image) = self.extract_image_from_inline(&dict, &data, current_ctm) {
+                        images.push(image);
+                    }
+                },
+
+                _ => {}, // Ignore other operators
             }
         }
 
         Ok(images)
     }
 
-    /// Extract images from a page and save them to files.
+    /// Extract images referenced by a Do operator in the content stream.
     ///
-    /// This method extracts all images from the specified page and saves them
-    /// to the given output directory with automatically generated filenames.
-    /// Useful for HTML export where images need to be saved as separate files.
+    /// This method handles image extraction from XObjects. It processes both Image and Form
+    /// XObjects, with recursion for nested Forms.
     ///
-    /// # Arguments
+    /// PDF files embed images as XObjects rather than inline images. These XObjects are
+    /// referenced in the page's content stream via the `Do` operator. For example: `/ImgName Do`
+    /// tells the renderer to draw the image named "ImgName".
     ///
-    /// * `page_index` - Zero-based page index
-    /// * `output_dir` - Directory to save images to
-    /// * `prefix` - Filename prefix (default: "img")
-    /// * `start_index` - Starting index for numbering (default: 1)
-    ///
-    /// # Returns
-    ///
-    /// Returns a vector of `ExtractedImageRef` containing filename and metadata
-    /// for each extracted image.
-    ///
-    /// # Examples
-    ///
-    /// ```no_run
-    /// # use pdf_oxide::document::PdfDocument;
-    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let mut doc = PdfDocument::open("document.pdf")?;
-    /// let images = doc.extract_images_to_files(0, "output", Some("page0_img"), Some(1))?;
-    ///
-    /// for img in &images {
-    ///     println!("Saved image: {} ({}x{})", img.filename, img.width, img.height);
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
+    /// This method:
+    /// - Locates XObject references in the Resources dictionary
+    /// - Resolves both direct and indirect references (e.g., `7 0 R`)
+    /// - Extracts Image XObjects directly
+    /// - Recursively processes Form XObjects
+    /// - Applies CTM transformations for proper positioning
+    /// - Resolves ColorSpace indirect references
+    fn extract_images_from_xobject_do(
+        &mut self,
+        name: &str,
+        resources: &Object,
+        ctm: crate::content::Matrix,
+    ) -> Result<Vec<crate::extractors::PdfImage>> {
+        use crate::extractors::extract_image_from_xobject;
+
+
+        let mut images = Vec::new();
+
+        // Get XObject dictionary
+        let resources_dict = resources.as_dict().ok_or_else(|| Error::ParseError {
+            offset: 0,
+            reason: "Resources is not a dictionary".to_string(),
+        })?;
+
+        let xobject_obj = match resources_dict.get("XObject") {
+            Some(obj) => obj,
+            None => return Ok(images), // No XObjects, return empty
+        };
+
+        // Resolve indirect reference if needed
+        let resolved_xobject_obj = if let Some(ref_obj) = xobject_obj.as_reference() {
+            self.load_object(ref_obj)?
+        } else {
+            xobject_obj.clone()
+        };
+
+        let xobject_dict = resolved_xobject_obj.as_dict().ok_or_else(|| Error::ParseError {
+            offset: 0,
+            reason: "XObject dictionary is not a dictionary".to_string(),
+        })?;
+
+        // Get the specific XObject by name
+        let xobject_ref_obj = match xobject_dict.get(name) {
+            Some(obj) => obj,
+            None => return Ok(images), // Named XObject not found
+        };
+
+        // Load XObject (can be indirect reference or direct object)
+        let xobject_ref_opt = xobject_ref_obj.as_reference();
+        let xobject = if let Some(ref_obj) = xobject_ref_opt {
+            self.load_object(ref_obj)?
+        } else {
+            xobject_ref_obj.clone()
+        };
+        let xobject_dict = xobject.as_dict().ok_or_else(|| Error::ParseError {
+            offset: 0,
+            reason: "XObject is not a dictionary".to_string(),
+        })?;
+
+        // Check Subtype
+        let subtype = xobject_dict
+            .get("Subtype")
+            .and_then(|s| s.as_name())
+            .unwrap_or("");
+
+
+        match subtype {
+            "Image" => {
+
+                // For Stream objects, resolve any indirect references in the dictionary
+                let mut resolved_xobject = xobject.clone();
+
+                if let Object::Stream { dict, data } = &xobject {
+                    let mut new_dict = dict.clone();
+
+                    // Resolve ColorSpace if it's an indirect reference
+                    // Many PDFs from tools like Google Slides reference ColorSpace via indirect
+                    // references (e.g., "7 0 R"). The extraction function needs the resolved object.
+                    // Without this, we get: "Invalid color space object: Reference(...)"
+                    if let Some(Object::Reference(cs_ref)) = dict.get("ColorSpace") {
+                        if let Ok(resolved_cs) = self.load_object(*cs_ref) {
+                            new_dict.insert("ColorSpace".to_string(), resolved_cs);
+                        }
+                    }
+
+                    resolved_xobject = Object::Stream {
+                        dict: new_dict,
+                        data: data.clone(),
+                    };
+                }
+
+                // Extract as Image XObject
+                match extract_image_from_xobject(Some(self), &resolved_xobject, xobject_ref_opt) {
+                    Ok(mut image) => {
+                        // Apply CTM transformation to bbox
+                        if let Some(rect) = image.bbox() {
+                            let new_bbox = self.transform_bbox_with_ctm(rect, ctm);
+                            image.set_bbox(new_bbox);
+                            images.push(image);
+                        } else {
+                            // No bbox yet, use CTM to estimate one
+                            // For a unit square (0,0) to (1,1) in user space
+                            let width = image.width() as f32;
+                            let height = image.height() as f32;
+                            let bbox = crate::geometry::Rect {
+                                x: ctm.e,
+                                y: ctm.f,
+                                width: ctm.a * width,
+                                height: ctm.d * height,
+                            };
+                            image.set_bbox(bbox);
+                            images.push(image);
+                        }
+                    },
+                    Err(_) => {
+                    },
+                }
+            },
+            "Form" => {
+                // Recursively extract from Form XObject
+                // Only process if we have a valid reference
+                if let Some(ref_obj) = xobject_ref_opt {
+                    if let Ok(mut form_images) = self.extract_images_from_form_xobject(
+                        ref_obj,
+                        &xobject,
+                        resources,
+                        ctm,
+                        &mut Vec::new(),
+                    ) {
+                        images.append(&mut form_images);
+                    }
+                }
+            },
+            _ => {}, // Skip other types (PS, etc.)
+        }
+
+        Ok(images)
+    }
+
+    /// Recursively extract images from a Form XObject.
+    fn extract_images_from_form_xobject(
+        &mut self,
+        xobject_ref: ObjectRef,
+        xobject: &Object,
+        parent_resources: &Object,
+        parent_ctm: crate::content::Matrix,
+        xobject_stack: &mut Vec<ObjectRef>,
+    ) -> Result<Vec<crate::extractors::PdfImage>> {
+        use crate::content::parse_content_stream;
+        use crate::content::Operator;
+
+        let mut images = Vec::new();
+
+        // Cycle detection
+        if xobject_stack.contains(&xobject_ref) || xobject_stack.len() >= 100 {
+            return Ok(images);
+        }
+        xobject_stack.push(xobject_ref);
+
+        let xobject_dict = xobject.as_dict().ok_or_else(|| Error::ParseError {
+            offset: 0,
+            reason: "Form XObject is not a dictionary".to_string(),
+        })?;
+
+        // Get Form resources (with fallback to parent)
+        let form_resources = if let Some(form_res) = xobject_dict.get("Resources") {
+            if let Some(ref_obj) = form_res.as_reference() {
+                self.load_object(ref_obj)?
+            } else {
+                form_res.clone()
+            }
+        } else {
+            parent_resources.clone()
+        };
+
+        // Get Form transformation matrix (default to identity)
+        let matrix = if let Some(matrix_obj) = xobject_dict.get("Matrix") {
+            self.parse_matrix_from_object(matrix_obj)
+                .unwrap_or_else(crate::content::Matrix::identity)
+        } else {
+            crate::content::Matrix::identity()
+        };
+
+        // Combine transformations
+        let new_ctm = parent_ctm.multiply(&matrix);
+
+        // Decode form stream
+        let stream_data = self.decode_stream_with_encryption(&xobject, xobject_ref)?;
+
+        // Parse operators from form stream
+        let operators = parse_content_stream(&stream_data)?;
+
+        // Process operators (similar to extract_images_from_content)
+        let mut ctm_stack = vec![new_ctm];
+
+        for op in operators {
+            match op {
+                Operator::SaveState => {
+                    if let Some(current_ctm) = ctm_stack.last() {
+                        ctm_stack.push(*current_ctm);
+                    }
+                },
+                Operator::RestoreState => {
+                    if ctm_stack.len() > 1 {
+                        ctm_stack.pop();
+                    }
+                },
+                Operator::Cm { a, b, c, d, e, f } => {
+                    if let Some(current_ctm) = ctm_stack.last_mut() {
+                        let matrix = crate::content::Matrix { a, b, c, d, e, f };
+                        *current_ctm = current_ctm.multiply(&matrix);
+                    }
+                },
+
+                Operator::Do { name } => {
+                    let current_ctm = ctm_stack.last().copied().unwrap_or_else(crate::content::Matrix::identity);
+                    if let Ok(mut xobj_images) =
+                        self.extract_images_from_xobject_do(&name, &form_resources, current_ctm)
+                    {
+                        images.append(&mut xobj_images);
+                    }
+                },
+
+                Operator::InlineImage { dict, data } => {
+                    let current_ctm = ctm_stack.last().copied().unwrap_or_else(crate::content::Matrix::identity);
+                    if let Ok(image) = self.extract_image_from_inline(&dict, &data, current_ctm) {
+                        images.push(image);
+                    }
+                },
+
+                _ => {}, // Ignore other operators
+            }
+        }
+
+        xobject_stack.pop();
+        Ok(images)
+    }
+
+    /// Extract an inline image from the content stream.
+    fn extract_image_from_inline(
+        &mut self,
+        dict: &std::collections::HashMap<String, Object>,
+        data: &[u8],
+        ctm: crate::content::Matrix,
+    ) -> Result<crate::extractors::PdfImage> {
+        use crate::extractors::expand_inline_image_dict;
+
+        // Expand abbreviated dictionary
+        let expanded_dict = expand_inline_image_dict(dict.clone());
+
+        // Build a temporary stream object from the dictionary and data
+        let stream_obj = Object::Stream {
+            dict: expanded_dict,
+            data: bytes::Bytes::copy_from_slice(data),
+        };
+
+        // Use existing extraction logic
+        let mut image = crate::extractors::extract_image_from_xobject(Some(self), &stream_obj, None)?;
+
+        // Apply CTM to create bbox
+        let width = image.width() as f32;
+        let height = image.height() as f32;
+        let bbox = crate::geometry::Rect {
+            x: ctm.e,
+            y: ctm.f,
+            width: ctm.a * width,
+            height: ctm.d * height,
+        };
+        image.set_bbox(bbox);
+
+        Ok(image)
+    }
+
+    /// Transform a bounding box using CTM.
+    fn transform_bbox_with_ctm(
+        &self,
+        rect: &crate::geometry::Rect,
+        ctm: crate::content::Matrix,
+    ) -> crate::geometry::Rect {
+        // Transform the corners of the bbox using the CTM
+        // Bottom-left corner
+        let x1 = ctm.a * rect.x + ctm.c * rect.y + ctm.e;
+        let y1 = ctm.b * rect.x + ctm.d * rect.y + ctm.f;
+
+        // Top-right corner
+        let x2 = ctm.a * (rect.x + rect.width) + ctm.c * (rect.y + rect.height) + ctm.e;
+        let y2 = ctm.b * (rect.x + rect.width) + ctm.d * (rect.y + rect.height) + ctm.f;
+
+        // Create new bbox from transformed corners
+        let x = x1.min(x2);
+        let y = y1.min(y2);
+        let width = (x1 - x2).abs();
+        let height = (y1 - y2).abs();
+
+        crate::geometry::Rect { x, y, width, height }
+    }
+
+    /// Parse a Matrix object from PDF.
+    fn parse_matrix_from_object(&self, obj: &Object) -> Option<crate::content::Matrix> {
+        if let Some(array) = obj.as_array() {
+            if array.len() >= 6 {
+                let mut values = [0.0f32; 6];
+                for (i, val) in array.iter().take(6).enumerate() {
+                    let num = if let Some(f) = val.as_real() {
+                        f as f32
+                    } else if let Some(i_val) = val.as_integer() {
+                        i_val as f32
+                    } else {
+                        return None;
+                    };
+                    values[i] = num;
+                }
+
+                return Some(crate::content::Matrix {
+                    a: values[0],
+                    b: values[1],
+                    c: values[2],
+                    d: values[3],
+                    e: values[4],
+                    f: values[5],
+                });
+            }
+        }
+        None
+    }
+
     pub fn extract_images_to_files(
         &mut self,
         page_index: usize,
