@@ -90,6 +90,10 @@ All notable changes to PDFOxide are documented here.
 - Deleted commented-out `DocumentType::detect()` test block in `src/extractors/gap_statistics.rs`
 - Removed stale TODO comments in `scripts/setup-hooks.sh`, `src/bin/analyze_pdf_features.rs`, `src/document.rs`
 
+### 🏆 Community Contributors
+
+🥇 **@SeanPedersen** — Huge thanks to Sean for reporting multiple issues (#41, #44, #45, #46) that drove the entire stability focus of this release. His real-world testing uncovered a parser bug with Google-generated PDFs, image extraction failures on content stream references, and performance problems — each report triggering deep investigation and significant fixes. The parser robustness, image extraction, and testing infrastructure improvements in v0.3.5 all trace back to Sean's thorough bug reports. 🙏🔍
+
 ## [0.3.4] - 2026-02-12
 
 ### ⚠️ Breaking Changes
