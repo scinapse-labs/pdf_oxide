@@ -280,6 +280,11 @@ fn parse_xref_recursive<R: Read + Seek>(
             },
         }
     } else {
+        log::debug!(
+            "Xref at offset {} starts with unexpected data: {:?}",
+            offset,
+            &trimmed[..trimmed.len().min(20)]
+        );
         return Err(Error::InvalidXref);
     };
 
@@ -561,6 +566,9 @@ fn parse_xref_stream<R: Read + Seek>(reader: &mut R, offset: u64) -> Result<Cros
         .ok_or_else(|| Error::InvalidPdf("invalid /W[2]".to_string()))? as usize;
 
     let entry_size = w1 + w2 + w3;
+    if entry_size == 0 {
+        return Err(Error::InvalidPdf("xref stream entry size is 0".to_string()));
+    }
 
     // Get size
     let size = stream_dict
@@ -575,6 +583,9 @@ fn parse_xref_stream<R: Read + Seek>(reader: &mut R, offset: u64) -> Result<Cros
             .as_array()
             .ok_or_else(|| Error::InvalidPdf("invalid /Index".to_string()))?;
 
+        if index_array.len() % 2 != 0 {
+            return Err(Error::InvalidPdf("xref stream /Index array has odd length".to_string()));
+        }
         let mut ranges = Vec::new();
         for i in (0..index_array.len()).step_by(2) {
             let start = index_array[i]
