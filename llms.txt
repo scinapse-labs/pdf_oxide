@@ -1,64 +1,74 @@
 # PDF Oxide
 
-> Fast PDF library for Python and Rust. Text extraction, image extraction,
-> PDF creation, editing, and markdown conversion. Mean 2.1ms per document.
-> MIT / Apache-2.0 license.
+> PDF Oxide is a high-performance PDF library for Python and Rust.
+> Text extraction, image extraction, PDF creation, editing, and markdown conversion.
+> Mean 2.1ms per document. 100% pass rate on 3,830 real-world PDFs.
+> MIT / Apache-2.0 license. Current version: 0.3.6.
+
+- Python: `pip install pdf-oxide`
+- Rust: `cargo add pdf_oxide`
+- Documentation: https://pdf.oxide.fyi
+- Full documentation in one file: https://pdf.oxide.fyi/llms-full.txt
 
 ## Getting Started
 
-- [Python Quick Start](https://pdf.oxide.fyi/docs/getting-started/python): Install with pip, extract text in 3 lines
-- [Rust Quick Start](https://pdf.oxide.fyi/docs/getting-started/rust): Add to Cargo.toml, use PdfDocument and Pdf APIs
+- [Python Quick Start](https://raw.githubusercontent.com/yfedoseev/pdf_oxide/main/docs/getting-started-python.md): Install with pip, extract text, create PDFs, edit documents
+- [Rust Quick Start](https://raw.githubusercontent.com/yfedoseev/pdf_oxide/main/docs/getting-started-rust.md): Add to Cargo.toml, PdfDocument and Pdf APIs, error handling
+
+## API Reference
+
+- [Rust API (docs.rs)](https://docs.rs/pdf_oxide): Complete Rust API reference with all public types and methods
+- [README](https://raw.githubusercontent.com/yfedoseev/pdf_oxide/main/README.md): Project overview, installation, quick start examples
+- [Changelog](https://raw.githubusercontent.com/yfedoseev/pdf_oxide/main/CHANGELOG.md): Version history and release notes
+
+## Guides
+
+- [PDF Creation Guide](https://raw.githubusercontent.com/yfedoseev/pdf_oxide/main/docs/PDF_CREATION_GUIDE.md): DocumentBuilder, fonts, images, form fields, annotations
+- [Markdown Converter](https://raw.githubusercontent.com/yfedoseev/pdf_oxide/main/docs/MARKDOWN_CONVERTER_USAGE.md): PDF to Markdown conversion options
 
 ## Extraction
 
-- [Text Extraction](https://pdf.oxide.fyi/docs/extraction/text): extract_text, extract_spans, extract_chars with position and font data
-- [Image Extraction](https://pdf.oxide.fyi/docs/extraction/images): Content streams, Form XObjects, inline images
-- [Markdown Conversion](https://pdf.oxide.fyi/docs/extraction/markdown): to_markdown with heading detection
-- [HTML Conversion](https://pdf.oxide.fyi/docs/extraction/html): to_html preserving layout
-- [Form Data](https://pdf.oxide.fyi/docs/extraction/forms): FormField extraction, FDF/XFDF export
-- [Annotations](https://pdf.oxide.fyi/docs/extraction/annotations): Bookmarks, outline, all annotation types
-- [Metadata & XMP](https://pdf.oxide.fyi/docs/extraction/metadata): XMP properties, page labels, catalog
-- [Text Search](https://pdf.oxide.fyi/docs/extraction/search): Regex, case-insensitive, page-level results
+- extract_text(page_index): Extract plain text from a page
+- extract_spans(page_index): Extract text with font, size, color, position metadata
+- extract_chars(page_index): Per-character extraction with bounding boxes
+- extract_images(page_index): Extract images from content streams, XObjects, inline
+- extract_paths(page_index): Extract vector graphics and paths
+- to_markdown(page_index) / to_markdown_all(): Convert pages to Markdown
+- to_html(page_index) / to_html_all(): Convert pages to HTML
+- FormField::extract_fields(): Extract form field values, export FDF/XFDF
+- get_annotations(page_index): Get all annotation types
+- get_outline(): Get document bookmarks/outline
+- TextSearcher: Regex and case-insensitive text search
 
 ## Creation
 
-- [From Markdown](https://pdf.oxide.fyi/docs/creation/from-markdown): Pdf::from_markdown with full syntax support
-- [From HTML](https://pdf.oxide.fyi/docs/creation/from-html): Pdf::from_html
-- [From Images](https://pdf.oxide.fyi/docs/creation/from-images): Single and multi-page from PNG/JPEG/TIFF
-- [PdfBuilder API](https://pdf.oxide.fyi/docs/creation/builder): Fluent builder with page size, margins, fonts
-- [DocumentBuilder](https://pdf.oxide.fyi/docs/creation/document-builder): Low-level page builder with annotations
-- [Form Creation](https://pdf.oxide.fyi/docs/creation/forms): Text fields, checkboxes, radio buttons, dropdowns
-- [Annotations](https://pdf.oxide.fyi/docs/creation/annotations): 20+ annotation types
-- [Tables](https://pdf.oxide.fyi/docs/creation/tables): TableRenderer API
-- [Graphics](https://pdf.oxide.fyi/docs/creation/graphics): Paths, patterns, shadings, transparency
-- [QR & Barcodes](https://pdf.oxide.fyi/docs/creation/barcodes): QR codes, Code128, EAN-13, UPC-A
+- Pdf::from_markdown(text): Create PDF from Markdown
+- Pdf::from_html(html): Create PDF from HTML
+- Pdf::from_image(path) / from_images(paths): Create from PNG/JPEG/TIFF
+- Pdf::from_qrcode(data) / from_barcode(data, type): QR codes and barcodes
+- PdfBuilder: Fluent API — title, author, page_size, margins, font_size, add_text, add_image
+- DocumentBuilder: Low-level — pages, text positioning, form fields, annotations, tables
 
 ## Editing
 
-- [Overview](https://pdf.oxide.fyi/docs/editing/overview): DocumentEditor, open/save workflow
-- [Text Editing](https://pdf.oxide.fyi/docs/editing/text): DOM-style find/replace, PdfText methods
-- [Page Operations](https://pdf.oxide.fyi/docs/editing/pages): Rotate, crop, merge, extract
-- [Form Editing](https://pdf.oxide.fyi/docs/editing/forms): Get/set values, add/remove fields, flatten
-- [Annotation Editing](https://pdf.oxide.fyi/docs/editing/annotations): Modify, flatten, redact
-- [Image Manipulation](https://pdf.oxide.fyi/docs/editing/images): Reposition, resize, bounds
-- [Redaction](https://pdf.oxide.fyi/docs/editing/redaction): Apply redactions, remove content
-- [Encryption](https://pdf.oxide.fyi/docs/editing/encryption): AES-256, password protection
+- DocumentEditor::open(path): Open PDF for editing
+- PdfPage DOM: find_text_containing, set_text, replace text
+- Page operations: rotate, crop, merge, extract, media_box, crop_box
+- Form editing: get/set field values, add/remove fields, flatten
+- Annotation editing: modify, flatten, redact
+- Image manipulation: reposition, resize, set_bounds
+- Encryption: save_encrypted with AES-256, password protection
 
 ## Compliance
 
-- [PDF/A Validation](https://pdf.oxide.fyi/docs/compliance/pdf-a): Validation and conversion
-- [PDF/UA Accessibility](https://pdf.oxide.fyi/docs/compliance/pdf-ua): Accessibility checks
-- [PDF/X Print](https://pdf.oxide.fyi/docs/compliance/pdf-x): Print production validation
+- PdfAValidator / PdfAConverter: PDF/A validation and conversion
+- PdfUaValidator: PDF/UA accessibility checks
+- PdfXValidator: PDF/X print production validation
 
-## Reference
+## Optional
 
-- [Rust API](https://pdf.oxide.fyi/docs/reference/api): Complete method reference
-- [Python API](https://pdf.oxide.fyi/docs/reference/python-api): Python bindings reference
-- [Types & Enums](https://pdf.oxide.fyi/docs/reference/types): All public types
-
-## Performance
-
-- [Benchmarks](https://pdf.oxide.fyi/docs/performance): 2.1ms mean on 3,830 PDFs, 10x faster in v0.3.6
+- [Architecture](https://raw.githubusercontent.com/yfedoseev/pdf_oxide/main/docs/ARCHITECTURE.md): Internal architecture and design decisions
+- [Development Guide](https://raw.githubusercontent.com/yfedoseev/pdf_oxide/main/docs/DEVELOPMENT_GUIDE.md): Contributing and development setup
 
 ## Links
 
@@ -66,3 +76,4 @@
 - PyPI: https://pypi.org/project/pdf-oxide/
 - crates.io: https://crates.io/crates/pdf_oxide
 - docs.rs: https://docs.rs/pdf_oxide
+- Documentation: https://pdf.oxide.fyi
