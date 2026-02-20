@@ -253,6 +253,12 @@ impl LazyCMap {
     ///
     /// # Returns
     /// `Some(Arc<CMap>)` if parsing succeeded, `None` if parsing failed or stream was empty
+    /// Get the raw CMap stream bytes.
+    pub fn raw_data(&self) -> &[u8] {
+        &self.raw_stream
+    }
+
+    /// Returns the parsed CMap, loading and caching it on first access.
     pub fn get(&self) -> Option<Arc<CMap>> {
         // Step 1: Check local cache
         let mut parsed_guard = self.parsed.lock().unwrap();
@@ -422,7 +428,7 @@ pub fn parse_tounicode_cmap(data: &[u8]) -> Result<CMap> {
     // Format: <srcCode> <dstString>
     for section in extract_sections(&content, "beginbfchar", "endbfchar") {
         for line in section.lines() {
-            if let Some((src, dst)) = parse_bfchar_line(line) {
+            for (src, dst) in parse_bfchar_line(line) {
                 log::trace!("ToUnicode bfchar: 0x{:02X} -> {:?}", src, dst);
                 cmap.insert(src, dst);
             }
@@ -484,62 +490,65 @@ fn extract_sections<'a>(content: &'a str, begin: &str, end: &str) -> Vec<&'a str
     sections
 }
 
-/// Parse a bfchar line: `<src> <dst>`
+/// Parse a bfchar line, returning all `<src> <dst>` pairs found on the line.
 ///
 /// Example: `<0041> <0041>` maps character code 0x41 to Unicode U+0041.
 /// Example: `<0003> <00410042>` maps character code 0x03 to Unicode "AB" (multi-char mapping).
-/// Example: `<D840DC3E> <20C49>` maps 4-byte character code to Unicode (for CID fonts).
-/// Example: `<0001> <space>` maps character code 0x01 to a space character.
+/// Example: `<01> <0041> <02> <0042>` maps two character codes on one line.
 ///
-/// Supports:
-/// - Hex code points: `<0041>`, `<00410042>` (ligatures)
-/// - Escape sequences: `<space>`, `<tab>`, `<newline>`, `<carriage return>`
-/// - Flexible whitespace: spaces inside angle brackets are allowed
-fn parse_bfchar_line(line: &str) -> Option<(u32, String)> {
+/// Supports multiple pairs per line, hex code points, ligatures, escape sequences,
+/// and flexible whitespace inside angle brackets.
+fn parse_bfchar_line(line: &str) -> Vec<(u32, String)> {
     lazy_static::lazy_static! {
-        // Flexible pattern that handles whitespace inside and outside angle brackets
-        // Matches: <...> <...> where ... can contain whitespace and hex digits or names
         static ref RE: Regex = Regex::new(r"<([^>]*)>\s*<([^>]*)>").unwrap();
     }
 
-    RE.captures(line).and_then(|caps| {
-        // Parse source character code (1-4 bytes, may have internal whitespace)
-        let src_str = caps[1].trim().replace(char::is_whitespace, "");
-        let src = u32::from_str_radix(&src_str, 16).ok()?;
+    let mut results = Vec::new();
 
-        // Parse destination - could be hex or an escape sequence name
-        let dst_str = caps[2].trim();
+    for caps in RE.captures_iter(line) {
+        let parsed = (|| -> Option<(u32, String)> {
+            let src_str = caps[1].trim().replace(char::is_whitespace, "");
+            let src = u32::from_str_radix(&src_str, 16).ok()?;
 
-        // Try as escape sequence first
-        let dst = if let Some(escape) = parse_escape_sequence(&format!("<{}>", dst_str)) {
-            escape
-        } else {
-            // Otherwise parse as hex (may have internal whitespace)
-            let dst_hex = dst_str.replace(char::is_whitespace, "");
+            let dst_str = caps[2].trim();
 
-            // Handle different destination formats:
-            // - 4 chars or less: single Unicode code point
-            // - 8 chars: could be UTF-16 surrogate pair OR two code points
-            // - More than 8 chars: multiple code points (ligatures)
-            if dst_hex.len() <= 4 {
-                let dst_code = u32::from_str_radix(&dst_hex, 16).ok()?;
-                char::from_u32(dst_code)?.to_string()
-            } else if dst_hex.len() == 8 {
-                // 8 hex digits - try UTF-16 surrogate pair first
-                let dst_code = u32::from_str_radix(&dst_hex, 16).ok()?;
-                if let Some(decoded) = decode_utf16_surrogate_pair(dst_code) {
-                    decoded
-                } else {
-                    // Fall back to two separate 4-digit code points (ligature)
-                    let mut result = String::new();
-                    if let Ok(code1) = u32::from_str_radix(&dst_hex[0..4], 16) {
-                        if let Some(ch) = char::from_u32(code1) {
-                            result.push(ch);
+            let dst = if let Some(escape) = parse_escape_sequence(&format!("<{}>", dst_str)) {
+                escape
+            } else {
+                let dst_hex = dst_str.replace(char::is_whitespace, "");
+
+                if dst_hex.len() <= 4 {
+                    let dst_code = u32::from_str_radix(&dst_hex, 16).ok()?;
+                    char::from_u32(dst_code)?.to_string()
+                } else if dst_hex.len() == 8 {
+                    let dst_code = u32::from_str_radix(&dst_hex, 16).ok()?;
+                    if let Some(decoded) = decode_utf16_surrogate_pair(dst_code) {
+                        decoded
+                    } else {
+                        let mut result = String::new();
+                        if let Ok(code1) = u32::from_str_radix(&dst_hex[0..4], 16) {
+                            if let Some(ch) = char::from_u32(code1) {
+                                result.push(ch);
+                            }
                         }
+                        if let Ok(code2) = u32::from_str_radix(&dst_hex[4..8], 16) {
+                            if let Some(ch) = char::from_u32(code2) {
+                                result.push(ch);
+                            }
+                        }
+                        if result.is_empty() {
+                            return None;
+                        }
+                        result
                     }
-                    if let Ok(code2) = u32::from_str_radix(&dst_hex[4..8], 16) {
-                        if let Some(ch) = char::from_u32(code2) {
-                            result.push(ch);
+                } else {
+                    let mut result = String::new();
+                    for i in (0..dst_hex.len()).step_by(4) {
+                        let end = (i + 4).min(dst_hex.len());
+                        if let Ok(code) = u32::from_str_radix(&dst_hex[i..end], 16) {
+                            if let Some(ch) = char::from_u32(code) {
+                                result.push(ch);
+                            }
                         }
                     }
                     if result.is_empty() {
@@ -547,26 +556,17 @@ fn parse_bfchar_line(line: &str) -> Option<(u32, String)> {
                     }
                     result
                 }
-            } else {
-                // Multi-character mapping (ligatures) - split into 4-char chunks
-                let mut result = String::new();
-                for i in (0..dst_hex.len()).step_by(4) {
-                    let end = (i + 4).min(dst_hex.len());
-                    if let Ok(code) = u32::from_str_radix(&dst_hex[i..end], 16) {
-                        if let Some(ch) = char::from_u32(code) {
-                            result.push(ch);
-                        }
-                    }
-                }
-                if result.is_empty() {
-                    return None;
-                }
-                result
-            }
-        };
+            };
 
-        Some((src, dst))
-    })
+            Some((src, dst))
+        })();
+
+        if let Some(pair) = parsed {
+            results.push(pair);
+        }
+    }
+
+    results
 }
 
 /// Parse a bfrange line: `<start> <end> <dst>`
@@ -860,9 +860,18 @@ mod tests {
 
     #[test]
     fn test_parse_bfchar_line() {
-        assert_eq!(parse_bfchar_line("<0041> <0041>"), Some((0x41, "A".to_string())));
-        assert_eq!(parse_bfchar_line("<00E9> <00E9>"), Some((0xE9, "é".to_string())));
-        assert_eq!(parse_bfchar_line("invalid line"), None);
+        assert_eq!(parse_bfchar_line("<0041> <0041>"), vec![(0x41, "A".to_string())]);
+        assert_eq!(parse_bfchar_line("<00E9> <00E9>"), vec![(0xE9, "é".to_string())]);
+        assert!(parse_bfchar_line("invalid line").is_empty());
+    }
+
+    #[test]
+    fn test_parse_bfchar_multiple_pairs_per_line() {
+        let result = parse_bfchar_line("<01> <0041> <02> <0042> <03> <0043>");
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], (0x01, "A".to_string()));
+        assert_eq!(result[1], (0x02, "B".to_string()));
+        assert_eq!(result[2], (0x03, "C".to_string()));
     }
 
     #[test]

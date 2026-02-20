@@ -11,6 +11,8 @@
 //! - `encoding` - Unicode encoding support for CID fonts
 
 mod adobe_glyph_list;
+/// CFF font encoding parser for extracting built-in encoding from CFF FontFile data.
+pub mod cff_encoding;
 pub mod character_mapper;
 /// CID to Unicode mappings for predefined Adobe CJK character collections.
 pub mod cid_mappings;
@@ -24,6 +26,8 @@ pub mod non_text_detection;
 pub mod truetype_cmap;
 /// TrueType/OpenType font parser for PDF embedding (v0.3.0).
 pub mod truetype_parser;
+/// Type 1 font encoding parser for extracting built-in encoding from FontFile data.
+pub mod type1_encoding;
 
 pub use character_mapper::CharacterMapper;
 pub use cmap::{parse_tounicode_cmap, CMap, LazyCMap};

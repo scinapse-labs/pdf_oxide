@@ -133,7 +133,7 @@ mod tests {
 
     #[test]
     fn test_adobe_korea1_hangul() {
-        // Test Hangul syllable from CID
-        assert_eq!(lookup_adobe_korea1(1000), Some(0xAC00)); // CID 1000 -> 가
+        // Test Hangul syllable from CID (from Adobe cid2code.txt)
+        assert_eq!(lookup_adobe_korea1(1086), Some(0xAC00)); // CID 1086 -> 가
     }
 }

@@ -16,6 +16,7 @@
 
 use pdf_oxide::fonts::cmap::LazyCMap;
 use pdf_oxide::fonts::FontInfo;
+use std::collections::HashMap;
 
 #[test]
 fn test_cmap_cache_hit_same_font_multiple_references() {
@@ -79,6 +80,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     let font2 = FontInfo {
@@ -100,6 +102,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     // First font: triggers cache population (parse CMap)
@@ -192,6 +195,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     let font_b = FontInfo {
@@ -213,6 +217,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Font A should map 0x0001 to 'a'
@@ -291,6 +296,7 @@ end
             first_char: None,
             last_char: None,
             default_width: 500.0,
+            multi_char_map: HashMap::new(),
         })
         .collect();
 
@@ -370,6 +376,7 @@ end
             first_char: None,
             last_char: None,
             default_width: 500.0,
+            multi_char_map: HashMap::new(),
         })
         .collect();
 
@@ -438,6 +445,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Font should work correctly (cache metrics are internal)
@@ -508,6 +516,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     });
 
     let mut handles = vec![];

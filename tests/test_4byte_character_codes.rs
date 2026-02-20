@@ -19,6 +19,7 @@
 
 use pdf_oxide::fonts::cmap::LazyCMap;
 use pdf_oxide::fonts::FontInfo;
+use std::collections::HashMap;
 
 #[test]
 fn test_4byte_cmap_extended_range_parsing() {
@@ -327,6 +328,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     // First access triggers lazy parsing

@@ -127,7 +127,8 @@ impl TrueTypeCMap {
             .read_u32::<BigEndian>()
             .map_err(|e| format!("Failed to read sfnt version: {}", e))?;
 
-        if version != 0x00010000 && version != 0x4F54544F {
+        // 0x00010000 = TrueType, 0x4F54544F = OpenType (OTTO), 0x74727565 = Apple TrueType ("true")
+        if version != 0x00010000 && version != 0x4F54544F && version != 0x74727565 {
             // 0x4F54544F = "OTTO" (OpenType)
             return Err(format!("Invalid sfnt version: 0x{:08X}", version));
         }
@@ -255,6 +256,12 @@ impl TrueTypeCMap {
                 .map_err(|e| format!("Failed to read idRangeOffset[{}]: {}", i, e))?;
         }
 
+        // Read remaining bytes as glyphIdArray (used when idRangeOffset != 0)
+        let mut glyph_id_array = Vec::new();
+        while let Ok(val) = cursor.read_u16::<BigEndian>() {
+            glyph_id_array.push(val);
+        }
+
         // Build character to GID mappings
         let mut gid_to_unicode = HashMap::new();
 
@@ -269,15 +276,31 @@ impl TrueTypeCMap {
                 }
 
                 let gid = if id_range_offsets[seg] == 0 {
-                    // Simple formula: GID = char_code + id_delta
+                    // Simple formula: GID = charCode + idDelta
                     (char_code as i32 + id_delta) as u16
                 } else {
-                    // Need to index into glyphIdArray - for now use simple formula
-                    (char_code as i32 + id_delta) as u16
+                    // Per TrueType spec: index into glyphIdArray
+                    // offset = idRangeOffset[i]/2 + (charCode - startCode[i]) + i - segCount
+                    let offset = (id_range_offsets[seg] as usize) / 2
+                        + (char_code as usize - start as usize)
+                        + seg
+                        - seg_count;
+                    if offset < glyph_id_array.len() {
+                        let raw = glyph_id_array[offset];
+                        if raw != 0 {
+                            (raw as i32 + id_delta) as u16
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    }
                 };
 
-                if let Some(ch) = char::from_u32(char_code) {
-                    gid_to_unicode.insert(gid, ch);
+                if gid != 0 {
+                    if let Some(ch) = char::from_u32(char_code) {
+                        gid_to_unicode.insert(gid, ch);
+                    }
                 }
             }
         }

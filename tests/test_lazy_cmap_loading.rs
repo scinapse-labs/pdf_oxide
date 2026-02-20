@@ -15,6 +15,7 @@
 
 use pdf_oxide::fonts::cmap::LazyCMap;
 use pdf_oxide::fonts::FontInfo;
+use std::collections::HashMap;
 
 #[test]
 fn test_lazy_cmap_not_parsed_on_creation() {
@@ -75,6 +76,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Verify: Character lookup should still work (lazy parsing on first access)
@@ -141,6 +143,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Verify same result from sequential calls
@@ -215,6 +218,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Verify: All entries should be accessible
@@ -297,6 +301,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Multiple lookups should all hit the cache
@@ -366,6 +371,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Verify: Explicit mappings work

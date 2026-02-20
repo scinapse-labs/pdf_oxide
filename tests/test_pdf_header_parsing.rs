@@ -83,16 +83,23 @@ fn test_header_beyond_1024_bytes() {
 }
 
 #[test]
-fn test_header_beyond_8192_bytes_fails() {
+fn test_header_beyond_8192_bytes_falls_back() {
     use pdf_oxide::document::parse_header;
     use std::io::Cursor;
 
-    // 9000 bytes of junk — beyond the 8192-byte search window
+    // 9000 bytes of junk — beyond the 8192-byte search window.
+    // In lenient mode, headerless PDFs default to version 1.4.
     let mut data = vec![b'X'; 9000];
     data.extend_from_slice(b"%PDF-1.4\n");
 
+    let mut cursor = Cursor::new(data.clone());
+    let (major, minor, offset) = parse_header(&mut cursor, true).unwrap();
+    assert_eq!((major, minor), (1, 4));
+    assert_eq!(offset, 0); // falls back to start
+
+    // Strict mode should fail
     let mut cursor = Cursor::new(data);
-    assert!(parse_header(&mut cursor, true).is_err());
+    assert!(parse_header(&mut cursor, false).is_err());
 }
 
 #[test]

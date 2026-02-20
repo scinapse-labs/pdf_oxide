@@ -11,6 +11,7 @@
 //! Spec: PDF 32000-1:2008 Section 9.7.5.2 (Predefined CMaps)
 
 use pdf_oxide::fonts::{CIDSystemInfo, Encoding, FontInfo};
+use std::collections::HashMap;
 
 #[test]
 fn test_identity_h_cmap_simple_cid_to_unicode() {
@@ -45,6 +46,7 @@ fn test_identity_h_cmap_simple_cid_to_unicode() {
         first_char: None,
         last_char: None,
         default_width: 1000.0,
+        multi_char_map: HashMap::new(),
     };
 
     // CID 0x4E00 should map to Unicode U+4E00 via Identity-H
@@ -88,15 +90,20 @@ fn test_unigb_ucs2_h_cmap_simplified_chinese() {
         first_char: None,
         last_char: None,
         default_width: 1000.0,
+        multi_char_map: HashMap::new(),
     };
 
-    // CID 0x2EE5 maps to U+4E00 via UniGB-UCS2-H
-    // This is a Simplified Chinese character "一" (one)
+    // For UCS2 encoding, char_to_unicode receives the raw character code from the
+    // content stream (not a post-CMap CID). UCS2 codes are treated as Unicode BMP
+    // values at Priority 2, so 0x2EE5 → U+2EE5 (CJK Radical Fish ⻥).
     let result = font.char_to_unicode(0x2EE5);
 
-    assert!(result.is_some(), "UniGB-UCS2-H should map CID 0x2EE5");
+    assert!(result.is_some(), "UniGB-UCS2-H should map char code 0x2EE5");
     let mapped = result.unwrap();
-    assert_eq!(mapped, "一", "CID 0x2EE5 should map to Chinese character '一' (U+4E00)");
+    assert_eq!(
+        mapped, "\u{2EE5}",
+        "char code 0x2EE5 should map to U+2EE5 (⻥) via CID-as-Unicode"
+    );
 }
 
 #[test]
@@ -131,6 +138,7 @@ fn test_unijis_ucs2_h_cmap_japanese() {
         first_char: None,
         last_char: None,
         default_width: 1000.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Japanese Hiragana character "あ" (U+3042)
@@ -173,6 +181,7 @@ fn test_unicns_ucs2_h_cmap_traditional_chinese() {
         first_char: None,
         last_char: None,
         default_width: 1000.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Traditional Chinese character "一" (U+4E00)
@@ -215,6 +224,7 @@ fn test_uniks_ucs2_h_cmap_korean() {
         first_char: None,
         last_char: None,
         default_width: 1000.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Korean Hangul character "가" (U+AC00)

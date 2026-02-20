@@ -20,6 +20,7 @@
 
 use pdf_oxide::fonts::cmap::LazyCMap;
 use pdf_oxide::fonts::FontInfo;
+use std::collections::HashMap;
 
 #[test]
 fn test_cmap_with_comments_and_metadata() {
@@ -89,6 +90,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Verify: Comments don't break parsing
@@ -165,6 +167,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Verify: Escape sequences are parsed
@@ -233,10 +236,11 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Verify: Boundary cases work
-    assert_eq!(font.char_to_unicode(0x0000), Some("\u{0000}".to_string())); // NUL
+    assert_eq!(font.char_to_unicode(0x0000), Some("\u{FFFD}".to_string())); // NUL mapped to replacement char
     assert_eq!(font.char_to_unicode(0x7FFF), Some("A".to_string()));
     assert_eq!(font.char_to_unicode(0xFFFF), Some("B".to_string()));
 }
@@ -302,6 +306,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Verify: Valid code works
@@ -375,6 +380,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Verify: Sparse mappings are found
@@ -451,6 +457,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Verify: First range entry maps correctly (from range logic)
@@ -530,6 +537,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Verify: bfchar mappings
@@ -601,6 +609,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Verify: Large range parses correctly
@@ -669,6 +678,7 @@ end
         first_char: None,
         last_char: None,
         default_width: 500.0,
+        multi_char_map: HashMap::new(),
     };
 
     // Explicit mapping takes priority
