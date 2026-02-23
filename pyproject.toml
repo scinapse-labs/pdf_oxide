@@ -12,7 +12,7 @@ license = {text = "MIT OR Apache-2.0"}
 authors = [
     {name = "PDF Oxide Contributors", email = "yfedoseev@gmail.com"},
 ]
-keywords = ["pdf", "text-extraction", "pdf-parser", "pdf-library", "rag", "llm", "markdown", "document-parser", "pdf-to-text", "pdf-extraction", "fast-pdf", "data-extraction"]
+keywords = ["pdf", "text-extraction", "pdf-parser", "pymupdf-alternative", "rag", "llm", "ocr", "markdown", "document-parser", "pdf-to-text", "pdf-to-markdown", "data-extraction"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -39,8 +39,10 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/yfedoseev/pdf_oxide"
-Documentation = "https://github.com/yfedoseev/pdf_oxide/blob/main/docs/getting-started-python.md"
+Documentation = "https://pdf.oxide.fyi/docs/getting-started/python"
 "API Reference (Rust)" = "https://docs.rs/pdf_oxide"
+"API Reference (Python)" = "https://pdf.oxide.fyi/docs/reference/python-api"
+"Performance Benchmarks" = "https://pdf.oxide.fyi/docs/performance"
 Repository = "https://github.com/yfedoseev/pdf_oxide"
 "Bug Tracker" = "https://github.com/yfedoseev/pdf_oxide/issues"
 
