@@ -417,7 +417,59 @@ impl FontInfo {
             } else {
                 log::debug!("Font '{}' using /Encoding entry", base_font);
             }
-            Self::parse_encoding(&resolved_enc_obj, doc)?
+            let (mut parsed_enc, mut multi_map) =
+                Self::parse_encoding(&resolved_enc_obj, doc)?;
+
+            // When /Encoding is a named encoding (e.g., /WinAnsiEncoding) AND the font
+            // has an embedded program, merge the font program's encoding. This handles
+            // fonts where the program maps glyphs to non-standard code positions
+            // (e.g., space at 0xCA) that the named encoding maps differently.
+            // The font program's mappings override the standard encoding.
+            if matches!(parsed_enc, Encoding::Standard(_)) {
+                if let Some(font_data) = &embedded_font_data {
+                    let font_program_enc = if subtype == "Type1" || subtype == "MMType1" {
+                        super::type1_encoding::parse_type1_encoding(font_data)
+                    } else {
+                        super::cff_encoding::parse_cff_encoding(font_data)
+                    };
+                    if let Some(prog_enc) = font_program_enc {
+                        log::info!(
+                            "Font '{}': merging {} font program encoding entries with {}",
+                            base_font,
+                            prog_enc.len(),
+                            match &parsed_enc {
+                                Encoding::Standard(n) => n.as_str(),
+                                _ => "custom",
+                            }
+                        );
+                        // Build Custom map: start with standard encoding, overlay font program
+                        let std_name = match &parsed_enc {
+                            Encoding::Standard(n) => n.clone(),
+                            _ => "StandardEncoding".to_string(),
+                        };
+                        let mut custom_map: HashMap<u8, char> = HashMap::new();
+                        for code in 0u8..=255 {
+                            if let Some(unicode_str) = standard_encoding_lookup(&std_name, code) {
+                                if let Some(ch) = unicode_str.chars().next() {
+                                    custom_map.insert(code, ch);
+                                }
+                            }
+                        }
+                        // Font program overrides
+                        for (&code, &ch) in &prog_enc {
+                            custom_map.insert(code, ch);
+                            if is_ligature_char(ch) {
+                                if let Some(expanded) = expand_ligature_char(ch) {
+                                    multi_map.insert(code, expanded.to_string());
+                                }
+                            }
+                        }
+                        parsed_enc = Encoding::Custom(custom_map);
+                    }
+                }
+            }
+
+            (parsed_enc, multi_map)
         } else {
             // Try font program's built-in encoding before any default
             let mut font_program_result = None;
@@ -2710,11 +2762,13 @@ fn _old_glyph_name_to_unicode_removed() {
 fn is_ligature_char(c: char) -> bool {
     matches!(
         c,
-        'ﬁ' |  // fi - U+FB01
-        'ﬂ' |  // fl - U+FB02
-        'ﬀ' |  // ff - U+FB00
+        'ﬀ' |  // ff  - U+FB00
+        'ﬁ' |  // fi  - U+FB01
+        'ﬂ' |  // fl  - U+FB02
         'ﬃ' |  // ffi - U+FB03
-        'ﬄ' // ffl - U+FB04
+        'ﬄ' |  // ffl - U+FB04
+        'ﬅ' |  // st (long s + t) - U+FB05
+        'ﬆ'    // st - U+FB06
     )
 }
 
@@ -2741,11 +2795,13 @@ fn is_ligature_char(c: char) -> bool {
 /// ```ignore
 fn expand_ligature_char(c: char) -> Option<&'static str> {
     match c {
+        'ﬀ' => Some("ff"),  // U+FB00
         'ﬁ' => Some("fi"),  // U+FB01
         'ﬂ' => Some("fl"),  // U+FB02
-        'ﬀ' => Some("ff"),  // U+FB00
         'ﬃ' => Some("ffi"), // U+FB03
         'ﬄ' => Some("ffl"), // U+FB04
+        'ﬅ' => Some("st"),  // U+FB05 (long s + t)
+        'ﬆ' => Some("st"),  // U+FB06
         _ => None,
     }
 }
@@ -2780,6 +2836,8 @@ fn expand_ligature_char_code(char_code: u16) -> Option<&'static str> {
         0xFB02 => Some("fl"),  // LATIN SMALL LIGATURE FL
         0xFB03 => Some("ffi"), // LATIN SMALL LIGATURE FFI
         0xFB04 => Some("ffl"), // LATIN SMALL LIGATURE FFL
+        0xFB05 => Some("st"),  // LATIN SMALL LIGATURE LONG S T
+        0xFB06 => Some("st"),  // LATIN SMALL LIGATURE ST
         _ => None,
     }
 }
@@ -3216,14 +3274,77 @@ fn standard_encoding_lookup(encoding: &str, code: u8) -> Option<String> {
             Some(unicode.to_string())
         },
         "StandardEncoding" => {
-            // StandardEncoding is mostly like WinAnsi for the ASCII range
+            // PostScript StandardEncoding per PDF Spec ISO 32000-1:2008, Annex D, Table D.1
+            // NOTE: StandardEncoding differs significantly from ISO-8859-1 in the 0xA0-0xFF range.
+            // Using ISO-8859-1 fallback here would produce wrong characters for ligatures,
+            // smart quotes, accents, and other typographic characters.
             if (32..=126).contains(&code) {
                 Some((code as char).to_string())
-            } else if code >= 0xA0 {
-                // Extended range uses ISO Latin-1 for most characters
-                char::from_u32(code as u32).map(|c| c.to_string())
             } else {
-                None
+                let unicode = match code {
+                    // 0xA0-0xAF
+                    0xA1 => '\u{00A1}', // exclamdown
+                    0xA2 => '\u{00A2}', // cent
+                    0xA3 => '\u{00A3}', // sterling
+                    0xA4 => '\u{2044}', // fraction (NOT currency ¤)
+                    0xA5 => '\u{00A5}', // yen
+                    0xA6 => '\u{0192}', // florin (NOT broken bar)
+                    0xA7 => '\u{00A7}', // section
+                    0xA8 => '\u{00A4}', // currency (NOT dieresis)
+                    0xA9 => '\u{0027}', // quotesingle (NOT copyright)
+                    0xAA => '\u{201C}', // quotedblleft (NOT ordfeminine)
+                    0xAB => '\u{00AB}', // guillemotleft
+                    0xAC => '\u{2039}', // guilsinglleft (NOT not-sign)
+                    0xAD => '\u{203A}', // guilsinglright (NOT soft-hyphen)
+                    0xAE => '\u{FB01}', // fi ligature (NOT registered)
+                    0xAF => '\u{FB02}', // fl ligature (NOT macron)
+                    // 0xB0-0xBF
+                    0xB1 => '\u{2013}', // endash (NOT plus-minus)
+                    0xB2 => '\u{2020}', // dagger (NOT superscript 2)
+                    0xB3 => '\u{2021}', // daggerdbl (NOT superscript 3)
+                    0xB4 => '\u{00B7}', // periodcentered (NOT acute accent)
+                    0xB6 => '\u{00B6}', // paragraph
+                    0xB7 => '\u{2022}', // bullet (NOT middle dot)
+                    0xB8 => '\u{201A}', // quotesinglbase (NOT cedilla)
+                    0xB9 => '\u{201E}', // quotedblbase (NOT superscript 1)
+                    0xBA => '\u{201D}', // quotedblright (NOT ordmasculine)
+                    0xBB => '\u{00BB}', // guillemotright
+                    0xBC => '\u{2026}', // ellipsis (NOT one quarter)
+                    0xBD => '\u{2030}', // perthousand (NOT one half)
+                    0xBF => '\u{00BF}', // questiondown
+                    // 0xC0-0xCF — accent marks and modifiers
+                    0xC1 => '\u{0060}', // grave (NOT A-grave)
+                    0xC2 => '\u{00B4}', // acute (NOT A-circumflex)
+                    0xC3 => '\u{02C6}', // circumflex (NOT A-tilde)
+                    0xC4 => '\u{02DC}', // tilde (NOT A-dieresis)
+                    0xC5 => '\u{00AF}', // macron (NOT A-ring)
+                    0xC6 => '\u{02D8}', // breve (NOT AE)
+                    0xC7 => '\u{02D9}', // dotaccent (NOT C-cedilla)
+                    0xC8 => '\u{00A8}', // dieresis (NOT E-grave)
+                    0xCA => '\u{02DA}', // ring (NOT E-circumflex)
+                    0xCB => '\u{00B8}', // cedilla (NOT E-dieresis)
+                    0xCD => '\u{02DD}', // hungarumlaut (NOT I-acute)
+                    0xCE => '\u{02DB}', // ogonek (NOT I-circumflex)
+                    0xCF => '\u{02C7}', // caron (NOT I-dieresis)
+                    // 0xD0 — em dash
+                    0xD0 => '\u{2014}', // emdash (NOT Eth)
+                    // 0xE0-0xEF — uppercase special chars
+                    0xE1 => '\u{00C6}', // AE (NOT a-acute)
+                    0xE3 => '\u{00AA}', // ordfeminine (NOT a-tilde)
+                    0xE8 => '\u{0141}', // Lslash (NOT e-grave)
+                    0xE9 => '\u{00D8}', // Oslash (NOT e-acute)
+                    0xEA => '\u{0152}', // OE (NOT e-circumflex)
+                    0xEB => '\u{00BA}', // ordmasculine (NOT e-dieresis)
+                    // 0xF0-0xFF — lowercase special chars
+                    0xF1 => '\u{00E6}', // ae (NOT n-tilde)
+                    0xF5 => '\u{0131}', // dotlessi (NOT o-tilde)
+                    0xF8 => '\u{0142}', // lslash (NOT o-stroke)
+                    0xF9 => '\u{00F8}', // oslash (NOT u-grave)
+                    0xFA => '\u{0153}', // oe (NOT u-acute)
+                    0xFB => '\u{00DF}', // germandbls (NOT u-circumflex)
+                    _ => return None,
+                };
+                Some(unicode.to_string())
             }
         },
         "MacRomanEncoding" => {

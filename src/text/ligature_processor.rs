@@ -125,6 +125,8 @@ pub fn get_ligature_components(ligature: char) -> Option<&'static str> {
         'ﬂ' => Some("fl"),  // U+FB02 - LATIN SMALL LIGATURE FL
         'ﬃ' => Some("ffi"), // U+FB03 - LATIN SMALL LIGATURE FFI
         'ﬄ' => Some("ffl"), // U+FB04 - LATIN SMALL LIGATURE FFL
+        'ﬅ' => Some("st"),  // U+FB05 - LATIN SMALL LIGATURE LONG S T
+        'ﬆ' => Some("st"),  // U+FB06 - LATIN SMALL LIGATURE ST
         _ => None,
     }
 }
