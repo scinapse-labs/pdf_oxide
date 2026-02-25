@@ -4418,14 +4418,20 @@ impl TextExtractor {
                     return Ok(());
                 }
 
-                // Load fonts from the Form XObject's own /Resources if present
-                // Per PDF spec §8.10.1, Form XObjects can have their own resources
-                let saved_fonts = self.fonts.clone();
-                let saved_resources = self.resources.clone();
-                let saved_xobj_cache = std::mem::take(&mut self.cached_xobject_refs);
+                // Only save/restore fonts+resources when XObject has its own Resources.
+                // Avoids expensive HashMap clone for XObjects that inherit page fonts.
+                let has_own_resources = xobject_dict.contains_key("Resources");
 
-                if let Some(xobj_resources) = xobject_dict.get("Resources") {
-                    // Resolve indirect reference if needed
+                let saved_fonts;
+                let saved_resources;
+                let saved_xobj_cache;
+
+                if has_own_resources {
+                    saved_fonts = Some(self.fonts.clone());
+                    saved_resources = self.resources.clone();
+                    saved_xobj_cache = Some(std::mem::take(&mut self.cached_xobject_refs));
+
+                    let xobj_resources = xobject_dict.get("Resources").unwrap();
                     let xobj_res = if let Some(res_ref) = xobj_resources.as_reference() {
                         match doc.load_object(res_ref) {
                             Ok(obj) => obj,
@@ -4435,7 +4441,6 @@ impl TextExtractor {
                         xobj_resources.clone()
                     };
 
-                    // Load fonts from XObject resources
                     if let Err(e) = doc.load_fonts(&xobj_res, self) {
                         log::debug!(
                             "Failed to load fonts for Form XObject '{}': {}, using page fonts",
@@ -4444,39 +4449,37 @@ impl TextExtractor {
                         );
                     }
 
-                    // Set XObject resources for nested XObject resolution
                     self.resources = Some(xobj_res);
+                } else {
+                    saved_fonts = None;
+                    saved_resources = None;
+                    saved_xobj_cache = None;
                 }
 
-                // Parse and execute operators from the Form XObject
-                let operators = match parse_content_stream_text_only(&stream_data) {
-                    Ok(ops) => ops,
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to parse Form XObject '{}' content stream: {}, skipping",
-                            name,
-                            e
-                        );
-                        self.fonts = saved_fonts;
-                        self.resources = saved_resources;
-                        self.cached_xobject_refs = saved_xobj_cache;
-                        return Ok(());
-                    },
-                };
-
+                // Streaming parse+execute: avoids allocating Vec<Operator>
                 self.xobject_depth += 1;
-                for op in operators {
-                    // Continue processing even if individual operators fail
-                    if let Err(e) = self.execute_operator(op) {
-                        log::debug!("Error executing operator in Form XObject '{}': {}", name, e);
-                    }
-                }
+                let parse_result = parse_and_execute_text_only(&stream_data, |op| {
+                    self.execute_operator(op)
+                });
                 self.xobject_depth -= 1;
+                if let Err(e) = parse_result {
+                    log::debug!(
+                        "Error parsing Form XObject '{}' content stream: {}, partial text may be extracted",
+                        name,
+                        e
+                    );
+                }
 
-                // Restore page-level fonts, resources, and XObject cache
-                self.fonts = saved_fonts;
-                self.resources = saved_resources;
-                self.cached_xobject_refs = saved_xobj_cache;
+                // Restore fonts, resources, and XObject cache only if saved
+                if let Some(fonts) = saved_fonts {
+                    self.fonts = fonts;
+                }
+                if let Some(res) = saved_resources {
+                    self.resources = Some(res);
+                }
+                if let Some(cache) = saved_xobj_cache {
+                    self.cached_xobject_refs = cache;
+                }
 
                 // Keep xobject_ref in processed_xobjects permanently.
                 // For text extraction, re-processing the same Form XObject produces
@@ -4514,20 +4517,16 @@ impl TextExtractor {
         let effective_font_size =
             buffer.font_size * (combined.d * combined.d + combined.b * combined.b).sqrt();
 
-        // Determine font weight
-        let font_weight = if let Some(font_name) = &buffer.font_name {
-            if let Some(font) = self.fonts.get(font_name) {
-                if font.is_bold() {
-                    FontWeight::Bold
-                } else {
-                    FontWeight::Normal
-                }
-            } else {
-                FontWeight::Normal
-            }
-        } else {
-            FontWeight::Normal
+        // Single font lookup for weight + italic
+        let font_ref = buffer
+            .font_name
+            .as_ref()
+            .and_then(|name| self.fonts.get(name));
+        let font_weight = match font_ref {
+            Some(f) if f.is_bold() => FontWeight::Bold,
+            _ => FontWeight::Normal,
         };
+        let is_italic_span = font_ref.map(|f| f.is_italic()).unwrap_or(false);
 
         // Apply CTM to convert from text space to user space
         // Per PDF Spec ISO 32000-1:2008 Section 9.4.4
@@ -4539,12 +4538,6 @@ impl TextExtractor {
             .font_name
             .clone()
             .unwrap_or_else(|| "Unknown".to_string());
-        let is_italic_span = buffer
-            .font_name
-            .as_ref()
-            .and_then(|name| self.fonts.get(name))
-            .map(|font| font.is_italic())
-            .unwrap_or(false);
         let span = TextSpan {
             text: buffer.unicode.clone(),
             bbox: Rect {
@@ -5286,7 +5279,7 @@ impl TextExtractor {
     /// This is similar to flush_tj_buffer but works with the tj_span_buffer field
     /// which accumulates consecutive Tj operators.
     fn flush_tj_span_buffer(&mut self) -> Result<()> {
-        if let Some(buffer) = self.tj_span_buffer.take() {
+        if let Some(mut buffer) = self.tj_span_buffer.take() {
             if !buffer.is_empty() {
                 // Use accumulated width from advance_position_for_string calls
                 let total_width = buffer.accumulated_width;
@@ -5297,36 +5290,24 @@ impl TextExtractor {
                     * (combined_flush.d * combined_flush.d + combined_flush.b * combined_flush.b)
                         .sqrt();
 
-                // Determine font weight
-                let font_weight = if let Some(font_name) = &buffer.font_name {
-                    if let Some(font) = self.fonts.get(font_name) {
-                        if font.is_bold() {
-                            FontWeight::Bold
-                        } else {
-                            FontWeight::Normal
-                        }
-                    } else {
-                        FontWeight::Normal
-                    }
-                } else {
-                    FontWeight::Normal
-                };
-
-                // Create single span for entire buffer
-                // PHASE 1 ENHANCEMENT: Mark space-only spans as offset_semantic=true
-                // This allows merge_adjacent_spans() to recognize them and skip double-space insertion
-                let font_name_buf = buffer
-                    .font_name
-                    .clone()
-                    .unwrap_or_else(|| "Unknown".to_string());
-                let is_italic_buf = buffer
+                // Single font lookup for weight + italic
+                let font_ref = buffer
                     .font_name
                     .as_ref()
-                    .and_then(|name| self.fonts.get(name))
-                    .map(|font| font.is_italic())
-                    .unwrap_or(false);
+                    .and_then(|name| self.fonts.get(name));
+                let font_weight = match font_ref {
+                    Some(f) if f.is_bold() => FontWeight::Bold,
+                    _ => FontWeight::Normal,
+                };
+                let is_italic_buf = font_ref.map(|f| f.is_italic()).unwrap_or(false);
+
+                // Move owned strings out of buffer (avoids clone)
+                let font_name_buf = buffer
+                    .font_name
+                    .take()
+                    .unwrap_or_else(|| "Unknown".to_string());
                 let span = TextSpan {
-                    text: buffer.unicode.clone(),
+                    text: std::mem::take(&mut buffer.unicode),
                     bbox: Rect {
                         x: buffer.start_matrix.e,
                         y: buffer.start_matrix.f,
