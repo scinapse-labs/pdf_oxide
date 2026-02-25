@@ -110,6 +110,9 @@ pub struct PdfDocument {
     /// Cached object offsets from full file scan (built on first xref miss).
     /// Maps object number to byte offset in file.
     scanned_object_offsets: Option<HashMap<u32, u64>>,
+    /// Cache of XObject refs known to NOT be Form XObjects (i.e., Image or unknown).
+    /// Used by text extraction to skip expensive full-object loads for images.
+    image_xobject_cache: HashSet<ObjectRef>,
 }
 
 impl std::fmt::Debug for PdfDocument {
@@ -222,6 +225,7 @@ impl PdfDocument {
             page_cache: HashMap::new(),
             page_cache_populated: false,
             scanned_object_offsets: None,
+            image_xobject_cache: HashSet::new(),
         };
 
         // Initialize encryption immediately
@@ -869,6 +873,75 @@ impl PdfDocument {
             // For all other types, just return a clone
             _ => Ok(obj.clone()),
         }
+    }
+
+    /// Peek at an XObject's /Subtype without loading the full object.
+    /// Returns true if the XObject is a Form XObject, false if Image or unknown.
+    /// For compressed objects or on any error, returns true (conservative — will load fully).
+    pub fn is_form_xobject(&mut self, obj_ref: ObjectRef) -> bool {
+        // Check negative cache first (known non-Form XObjects)
+        if self.image_xobject_cache.contains(&obj_ref) {
+            return false;
+        }
+
+        // If already in object cache, check directly
+        if let Some(cached) = self.object_cache.get(&obj_ref) {
+            let is_form = cached
+                .as_dict()
+                .and_then(|d| d.get("Subtype"))
+                .and_then(|s| s.as_name())
+                == Some("Form");
+            if !is_form {
+                self.image_xobject_cache.insert(obj_ref);
+            }
+            return is_form;
+        }
+
+        // Look up in xref table
+        let entry = match self.xref.get(obj_ref.id) {
+            Some(e) => e,
+            None => return true, // conservative fallback
+        };
+
+        // Only peek uncompressed objects — compressed ones require full load
+        use crate::xref::XRefEntryType;
+        if entry.entry_type != XRefEntryType::Uncompressed || !entry.in_use {
+            return true; // conservative fallback
+        }
+
+        // Seek to object offset and read a small buffer
+        let offset = entry.offset;
+        if self.reader.seek(SeekFrom::Start(offset)).is_err() {
+            return true;
+        }
+
+        // Read enough bytes for the object header + dictionary (typically <1KB)
+        let mut buf = [0u8; 1024];
+        let n = match self.reader.read(&mut buf) {
+            Ok(n) => n,
+            Err(_) => return true,
+        };
+        let data = &buf[..n];
+
+        // Search for /Subtype in the buffer
+        // Look for "/Subtype" followed by a name like "/Form" or "/Image"
+        if let Some(pos) = data.windows(8).position(|w| w == b"/Subtype") {
+            let after = &data[pos + 8..];
+            // Skip whitespace
+            let trimmed = after.iter().position(|&b| b != b' ' && b != b'\t' && b != b'\r' && b != b'\n');
+            if let Some(start) = trimmed {
+                let name_data = &after[start..];
+                if name_data.starts_with(b"/Form") {
+                    return true;
+                }
+                // Image, PS, or anything else — not a Form
+                self.image_xobject_cache.insert(obj_ref);
+                return false;
+            }
+        }
+
+        // /Subtype not found in first 1KB — conservative fallback
+        true
     }
 
     /// Load an uncompressed object (Type 1 xref entry).

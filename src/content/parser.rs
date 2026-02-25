@@ -247,8 +247,11 @@ where
     let mut op_count: usize = 0;
 
     while !input.is_empty() {
-        if let Ok((rest, _)) = multispace0::<&[u8], nom::error::Error<&[u8]>>.parse(input) {
-            input = rest;
+        // Skip leading whitespace (inline — both fast parser and scan_graphics
+        // also handle whitespace, but this covers the initial entry and error
+        // recovery paths without nom overhead).
+        while !input.is_empty() && input[0].is_ascii_whitespace() {
+            input = &input[1..];
         }
         if input.is_empty() {
             break;

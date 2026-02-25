@@ -4269,7 +4269,14 @@ impl TextExtractor {
             None => return Ok(()),
         };
 
-        // Load the XObject
+        // Quick Subtype check: skip Image XObjects without loading the full object.
+        // Image XObjects can be megabytes of compressed pixel data — loading them
+        // just to discover Subtype=Image is a major bottleneck (10-15ms per image).
+        if !doc.is_form_xobject(xobject_ref) {
+            return Ok(());
+        }
+
+        // Load the XObject (now known to be Form or unknown — worth the full load)
         let xobject = doc.load_object(xobject_ref)?;
 
         // Check if it's a Form XObject (has Subtype /Form)
