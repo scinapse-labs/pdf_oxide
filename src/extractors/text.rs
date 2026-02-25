@@ -1247,14 +1247,8 @@ struct TjBuffer {
     unicode: String,
     /// Text matrix at the start of this buffer
     start_matrix: Matrix,
-    /// Current transformation matrix at the start of this buffer
-    /// Per PDF Spec ISO 32000-1:2008 Section 9.4.4, CTM must be applied
-    /// to convert text space coordinates to user space
-    start_ctm: Matrix,
     /// Font name when buffer started
     font_name: Option<String>,
-    /// Font size when buffer started
-    font_size: f32,
     /// Fill color RGB when buffer started
     fill_color_rgb: (f32, f32, f32),
     /// Character spacing (Tc) when buffer started
@@ -1271,6 +1265,17 @@ struct TjBuffer {
     /// Cached font reference — avoids per-Tj HashMap lookup in append.
     /// Set once at buffer creation, never changes (font change flushes buffer).
     cached_font: Option<Arc<FontInfo>>,
+    /// Pre-computed effective font size (CTM × text_matrix scaling × font_size).
+    /// Computed once at buffer creation to avoid matrix multiply + sqrt per flush.
+    effective_font_size: f32,
+    /// Pre-computed font weight from cached font reference.
+    font_weight: FontWeight,
+    /// Pre-computed italic flag from cached font reference.
+    is_italic: bool,
+    /// Pre-computed user-space position (CTM applied to text matrix origin).
+    /// Avoids two transform_point calls per flush.
+    user_pos_x: f32,
+    user_pos_y: f32,
 }
 
 impl TjBuffer {
@@ -1278,19 +1283,24 @@ impl TjBuffer {
     fn new(
         state: &crate::content::graphics_state::GraphicsState,
         mcid: Option<u32>,
-        fonts: &HashMap<String, Arc<FontInfo>>,
+        cached_font: Option<Arc<FontInfo>>,
     ) -> Self {
-        let cached_font = state
-            .font_name
-            .as_ref()
-            .and_then(|name| fonts.get(name))
-            .cloned();
+        // Pre-compute effective font size: CTM × text_matrix scaling × font_size
+        let combined = state.ctm.multiply(&state.text_matrix);
+        let effective_font_size = state.font_size
+            * (combined.d * combined.d + combined.b * combined.b).sqrt();
+        let font_weight = match &cached_font {
+            Some(f) if f.is_bold() => FontWeight::Bold,
+            _ => FontWeight::Normal,
+        };
+        let is_italic = cached_font.as_ref().map(|f| f.is_italic()).unwrap_or(false);
+        // Pre-compute user-space position: text_matrix origin → CTM transform
+        let text_pos = state.text_matrix.transform_point(0.0, 0.0);
+        let user_pos = state.ctm.transform_point(text_pos.x, text_pos.y);
         Self {
             unicode: String::new(),
             start_matrix: state.text_matrix,
-            start_ctm: state.ctm,
             font_name: state.font_name.clone(),
-            font_size: state.font_size,
             fill_color_rgb: state.fill_color_rgb,
             char_space: state.char_space,
             word_space: state.word_space,
@@ -1298,6 +1308,11 @@ impl TjBuffer {
             mcid,
             accumulated_width: 0.0,
             cached_font,
+            effective_font_size,
+            font_weight,
+            is_italic,
+            user_pos_x: user_pos.x,
+            user_pos_y: user_pos.y,
         }
     }
 
@@ -3252,23 +3267,55 @@ impl TextExtractor {
         match op {
             // Text state operators
             Operator::Tf { font, size } => {
-                // Flush Tj buffer before changing font — the buffer decodes bytes
-                // using the font set at creation time, so a font change requires a
-                // new buffer to avoid decoding with the wrong ToUnicode CMap.
-                self.flush_tj_span_buffer()?;
+                // Skip flush + lookup when font name AND size haven't changed.
+                // Many PDFs redundantly set the same font (e.g., Tf after q/Q).
+                let same_font = {
+                    let state = self.state_stack.current();
+                    state.font_size == size
+                        && state.font_name.as_deref() == Some(font.as_str())
+                };
+                if !same_font {
+                    // Flush Tj buffer before changing font — the buffer decodes bytes
+                    // using the font set at creation time, so a font change requires a
+                    // new buffer to avoid decoding with the wrong ToUnicode CMap.
+                    self.flush_tj_span_buffer()?;
 
-                // Cache font reference for advance_position_for_string
-                self.cached_current_font = self.fonts.get(&font).cloned();
+                    // Cache font reference for advance_position_for_string
+                    self.cached_current_font = self.fonts.get(&font).cloned();
 
-                let state = self.state_stack.current_mut();
-                state.font_name = Some(font);
-                state.font_size = size;
+                    let state = self.state_stack.current_mut();
+                    state.font_name = Some(font);
+                    state.font_size = size;
+                }
             },
 
             // Text positioning operators
             Operator::Tm { a, b, c, d, e, f } => {
-                // Flush Tj buffer before changing text matrix
-                self.flush_tj_span_buffer()?;
+                // Optimization: batch character-by-character Tm+Tj patterns.
+                // Many PDFs position each character with individual Tm+Tj operators.
+                // If the new Tm is on the same line with the same transform,
+                // keep accumulating into the existing buffer instead of flushing
+                // (avoids creating thousands of 1-char TextSpans per page).
+                let is_continuation = match self.tj_span_buffer {
+                    Some(ref mut buffer) if !buffer.is_empty()
+                        && f.round() as i32 == buffer.start_matrix.f.round() as i32
+                        && a == buffer.start_matrix.a
+                        && b == buffer.start_matrix.b
+                        && c == buffer.start_matrix.c
+                        && d == buffer.start_matrix.d
+                        && e >= buffer.start_matrix.e =>
+                    {
+                        // Same line, same transform, LTR progression →
+                        // update width to reflect actual visual extent
+                        buffer.accumulated_width = e - buffer.start_matrix.e;
+                        true
+                    }
+                    _ => false,
+                };
+
+                if !is_continuation {
+                    self.flush_tj_span_buffer()?;
+                }
 
                 let state = self.state_stack.current_mut();
                 state.text_matrix = Matrix { a, b, c, d, e, f };
@@ -3323,7 +3370,7 @@ impl TextExtractor {
                         // Use ActualText in span mode - buffer it like normal text
                         if self.tj_span_buffer.is_none() {
                             self.tj_span_buffer =
-                                Some(TjBuffer::new(self.state_stack.current(), self.current_mcid, &self.fonts));
+                                Some(TjBuffer::new(self.state_stack.current(), self.current_mcid, self.cached_current_font.clone()));
                         }
 
                         // Append ActualText to buffer (convert to bytes for consistency)
@@ -3350,7 +3397,7 @@ impl TextExtractor {
                         // Create buffer if doesn't exist
                         if self.tj_span_buffer.is_none() {
                             self.tj_span_buffer =
-                                Some(TjBuffer::new(self.state_stack.current(), self.current_mcid, &self.fonts));
+                                Some(TjBuffer::new(self.state_stack.current(), self.current_mcid, self.cached_current_font.clone()));
                         }
 
                         // Merged single-pass: Unicode decode + width + position advance
@@ -3380,9 +3427,9 @@ impl TextExtractor {
                     if self.extract_spans {
                         // Use ActualText in span mode - create a single span
                         let mut buffer =
-                            TjBuffer::new(self.state_stack.current(), self.current_mcid, &self.fonts);
+                            TjBuffer::new(self.state_stack.current(), self.current_mcid, self.cached_current_font.clone());
                         buffer.append(actual_text.as_bytes())?;
-                        self.flush_tj_buffer(&buffer)?;
+                        self.flush_tj_buffer(buffer)?;
                     } else {
                         // Use ActualText in character mode
                         self.show_text(actual_text.as_bytes())?;
@@ -3540,7 +3587,7 @@ impl TextExtractor {
                 if self.extract_spans {
                     if self.tj_span_buffer.is_none() {
                         self.tj_span_buffer =
-                            Some(TjBuffer::new(self.state_stack.current(), self.current_mcid, &self.fonts));
+                            Some(TjBuffer::new(self.state_stack.current(), self.current_mcid, self.cached_current_font.clone()));
                     }
                     self.append_and_advance(&text)?;
                 } else {
@@ -3569,7 +3616,7 @@ impl TextExtractor {
                 if self.extract_spans {
                     if self.tj_span_buffer.is_none() {
                         self.tj_span_buffer =
-                            Some(TjBuffer::new(self.state_stack.current(), self.current_mcid, &self.fonts));
+                            Some(TjBuffer::new(self.state_stack.current(), self.current_mcid, self.cached_current_font.clone()));
                     }
                     self.append_and_advance(&text)?;
                 } else {
@@ -4488,7 +4535,7 @@ impl TextExtractor {
     ///
     /// This creates one span for the entire buffer content, properly calculating
     /// the total width including character spacing (Tc) and word spacing (Tw).
-    fn flush_tj_buffer(&mut self, buffer: &TjBuffer) -> Result<()> {
+    fn flush_tj_buffer(&mut self, mut buffer: TjBuffer) -> Result<()> {
         if buffer.is_empty() {
             return Ok(());
         }
@@ -4497,37 +4544,22 @@ impl TextExtractor {
         // (equivalent to calculate_tj_buffer_width, avoids redundant per-byte iteration)
         let total_width = buffer.accumulated_width;
 
-        // Calculate effective font size (accounting for CTM and text matrix scaling)
-        let combined = buffer.start_ctm.multiply(&buffer.start_matrix);
-        let effective_font_size =
-            buffer.font_size * (combined.d * combined.d + combined.b * combined.b).sqrt();
+        // Use pre-computed values from buffer creation (avoids
+        // matrix multiply + sqrt + HashMap lookup + transform_point per flush)
+        let effective_font_size = buffer.effective_font_size;
+        let font_weight = buffer.font_weight;
+        let is_italic_span = buffer.is_italic;
 
-        // Single font lookup for weight + italic
-        let font_ref = buffer
-            .font_name
-            .as_ref()
-            .and_then(|name| self.fonts.get(name));
-        let font_weight = match font_ref {
-            Some(f) if f.is_bold() => FontWeight::Bold,
-            _ => FontWeight::Normal,
-        };
-        let is_italic_span = font_ref.map(|f| f.is_italic()).unwrap_or(false);
-
-        // Apply CTM to convert from text space to user space
-        // Per PDF Spec ISO 32000-1:2008 Section 9.4.4
-        let text_pos = buffer.start_matrix.transform_point(0.0, 0.0);
-        let user_pos = buffer.start_ctm.transform_point(text_pos.x, text_pos.y);
-
-        // Create single span for entire buffer
+        // Move owned strings out of buffer (avoids clone)
         let font_name_span = buffer
             .font_name
-            .clone()
+            .take()
             .unwrap_or_else(|| "Unknown".to_string());
         let span = TextSpan {
-            text: buffer.unicode.clone(),
+            text: std::mem::take(&mut buffer.unicode),
             bbox: Rect {
-                x: user_pos.x,
-                y: user_pos.y,
+                x: buffer.user_pos_x,
+                y: buffer.user_pos_y,
                 width: total_width,
                 height: effective_font_size,
             },
@@ -4601,7 +4633,7 @@ impl TextExtractor {
         let char_space = self.state_stack.current().char_space;
         let word_space = self.state_stack.current().word_space;
 
-        let mut buffer = TjBuffer::new(self.state_stack.current(), self.current_mcid, &self.fonts);
+        let mut buffer = TjBuffer::new(self.state_stack.current(), self.current_mcid, self.cached_current_font.clone());
         let mut _element_count = 0;
 
         for (idx, element) in array.iter().enumerate() {
@@ -4693,7 +4725,7 @@ impl TextExtractor {
                                 .unwrap_or(false);
 
                         // Flush buffer before space
-                        self.flush_tj_buffer(&buffer)?;
+                        self.flush_tj_buffer(buffer)?;
 
                         // Check if the next element in the TJ array is a string
                         // that starts with whitespace. If so, DON'T insert a space to avoid doubling.
@@ -4717,7 +4749,7 @@ impl TextExtractor {
                         }
 
                         // Start new buffer with current state
-                        buffer = TjBuffer::new(self.state_stack.current(), self.current_mcid, &self.fonts);
+                        buffer = TjBuffer::new(self.state_stack.current(), self.current_mcid, self.cached_current_font.clone());
                     }
 
                     // Advance position for offset (updates text matrix)
@@ -4728,7 +4760,7 @@ impl TextExtractor {
 
         // Flush remaining buffer
         if !buffer.is_empty() {
-            self.flush_tj_buffer(&buffer)?;
+            self.flush_tj_buffer(buffer)?;
         }
 
         Ok(())
@@ -5347,22 +5379,11 @@ impl TextExtractor {
                 // Use accumulated width from advance_position_for_string calls
                 let total_width = buffer.accumulated_width;
 
-                // Calculate effective font size (accounting for CTM and text matrix scaling)
-                let combined_flush = buffer.start_ctm.multiply(&buffer.start_matrix);
-                let effective_font_size = buffer.font_size
-                    * (combined_flush.d * combined_flush.d + combined_flush.b * combined_flush.b)
-                        .sqrt();
-
-                // Single font lookup for weight + italic
-                let font_ref = buffer
-                    .font_name
-                    .as_ref()
-                    .and_then(|name| self.fonts.get(name));
-                let font_weight = match font_ref {
-                    Some(f) if f.is_bold() => FontWeight::Bold,
-                    _ => FontWeight::Normal,
-                };
-                let is_italic_buf = font_ref.map(|f| f.is_italic()).unwrap_or(false);
+                // Use pre-computed values from buffer creation (avoids
+                // matrix multiply + sqrt + HashMap lookup per flush)
+                let effective_font_size = buffer.effective_font_size;
+                let font_weight = buffer.font_weight;
+                let is_italic_buf = buffer.is_italic;
 
                 // Move owned strings out of buffer (avoids clone)
                 let font_name_buf = buffer
