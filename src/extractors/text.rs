@@ -2873,8 +2873,15 @@ impl TextExtractor {
                 continue;
             }
 
-            // Take ownership of current to avoid borrow checker issues
-            let mut current = current_span.take().unwrap();
+            // Take ownership of current to avoid borrow checker issues.
+            // Safety: checked is_none() above which continues, so this is always Some.
+            let mut current = match current_span.take() {
+                Some(s) => s,
+                None => {
+                    current_span = Some(span);
+                    continue;
+                }
+            };
 
             // Check if this span should be merged with the current one
             let y_diff = (span.bbox.y - current.bbox.y).abs();
@@ -4454,7 +4461,10 @@ impl TextExtractor {
                     saved_resources = self.resources.clone();
                     saved_xobj_cache = Some(std::mem::take(&mut self.cached_xobject_refs));
 
-                    let xobj_resources = xobject_dict.get("Resources").unwrap();
+                    // Safety: has_own_resources was set by contains_key("Resources")
+                    // so get("Resources") will always return Some here
+                    let xobj_resources = xobject_dict.get("Resources")
+                        .expect("contains_key confirmed Resources exists");
                     let xobj_res = if let Some(res_ref) = xobj_resources.as_reference() {
                         match doc.load_object(res_ref) {
                             Ok(obj) => obj,
@@ -4885,7 +4895,9 @@ impl TextExtractor {
         // Step 1: Calculate bounding box from character positions in text space
         // X position: from first character to end of last character
         let text_min_x = cluster[0].x_position;
-        let text_max_x = cluster.last().unwrap().x_position + cluster.last().unwrap().width;
+        // Safety: caller checks cluster.is_empty() above and returns early
+        let last = cluster.last().expect("cluster verified non-empty above");
+        let text_max_x = last.x_position + last.width;
         let text_width = (text_max_x - text_min_x).max(0.0);
 
         // Height from font size
@@ -5196,7 +5208,8 @@ impl TextExtractor {
 
         // Disjoint field borrows: cached_current_font (immutable) + tj_span_buffer (mutable)
         let font = self.cached_current_font.as_deref();
-        let buffer = self.tj_span_buffer.as_mut().unwrap();
+        // Safety: tj_span_buffer is always initialized via begin_text_object()
+        let buffer = self.tj_span_buffer.as_mut().expect("tj_span_buffer initialized in begin_text_object");
 
         let total_width = if let Some(font) = font {
             if font.subtype != "Type0" {
