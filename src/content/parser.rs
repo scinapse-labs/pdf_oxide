@@ -21,6 +21,7 @@ use nom::bytes::complete::take_while1;
 use nom::character::complete::multispace0;
 use nom::IResult;
 use nom::Parser;
+use smallvec::SmallVec;
 use std::collections::HashMap;
 
 /// Maximum number of operators to parse from a single content stream.
@@ -514,9 +515,16 @@ fn scan_to_et(data: &[u8]) -> Option<&[u8]> {
 /// Parse a single operator with its operands.
 ///
 /// Returns the remaining input and the parsed operator.
+///
+/// Uses `SmallVec<[Object; 6]>` for the operand buffer to avoid heap
+/// allocation for the common case (most PDF operators have 0-6 operands).
+/// Only spills to the heap for rare operators with more than 6 operands.
 fn parse_operator_with_operands(input: &[u8]) -> IResult<&[u8], Operator> {
-    // Collect operands until we hit an operator name
-    let mut operands = Vec::new();
+    // Collect operands until we hit an operator name.
+    // SmallVec<[Object; 6]>: stack-allocated for <= 6 operands (covers all
+    // standard PDF operators: cm/Tm need 6, most need 0-4). Only spills to
+    // heap for pathological content (e.g., deeply nested arrays in Other).
+    let mut operands: SmallVec<[Object; 6]> = SmallVec::new();
     let mut remaining = input;
 
     loop {
@@ -581,7 +589,11 @@ fn parse_operator_name(input: &[u8]) -> IResult<&[u8], &str> {
 ///
 /// This function converts the raw operator name and operands into a strongly-typed
 /// Operator enum variant. It handles type conversions and validates operand counts.
-fn build_operator(name: &str, operands: Vec<Object>) -> Operator {
+///
+/// Accepts `SmallVec<[Object; 6]>` to avoid heap allocation for the common case
+/// (most PDF operators have 0-6 operands). The operands are consumed and dropped
+/// after extraction.
+fn build_operator(name: &str, operands: SmallVec<[Object; 6]>) -> Operator {
     match name {
         // Text positioning
         "Td" => {
@@ -964,10 +976,12 @@ fn build_operator(name: &str, operands: Vec<Object>) -> Operator {
             Operator::EndMarkedContent
         },
 
-        // Unknown operator
+        // Unknown operator — convert SmallVec to Vec for the boxed storage.
+        // This path is rare (only for unrecognized operators), so the
+        // conversion cost is negligible.
         _ => Operator::Other {
             name: name.to_string(),
-            operands: Box::new(operands),
+            operands: Box::new(operands.into_vec()),
         },
     }
 }

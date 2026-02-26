@@ -1,6 +1,6 @@
 [package]
 name = "pdf_oxide"
-version = "0.3.9"
+version = "0.3.10"
 edition = "2021"
 authors = ["Yury Fedoseev <yfedoseev@gmail.com>"]
 license = "MIT OR Apache-2.0"
@@ -34,6 +34,7 @@ indexmap = "2.2"
 memchr = "2"     # SIMD-accelerated byte/substring search for content stream scanning
 byteorder = "1.5"  # For binary parsing (TrueType cmap tables)
 bitflags = "2"     # For form field flags
+smallvec = "1.13"  # Stack-allocated small vectors for content stream operands (#165)
 
 # Compression/Decompression
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
