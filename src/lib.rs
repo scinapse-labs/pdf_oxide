@@ -208,6 +208,11 @@ pub mod debug;
 #[cfg_attr(docsrs, doc(cfg(feature = "signatures")))]
 pub mod signatures;
 
+// Parallel page extraction (optional, v0.3.10)
+#[cfg(feature = "parallel")]
+#[cfg_attr(docsrs, doc(cfg(feature = "parallel")))]
+pub mod parallel;
+
 // PDF/A compliance validation (v0.3.0)
 pub mod compliance;
 
@@ -254,6 +259,9 @@ pub use outline::{Destination, OutlineItem};
 pub use fonts::global_cache::{
     clear_global_font_cache, global_font_cache_stats, set_global_font_cache_capacity,
 };
+
+#[cfg(feature = "parallel")]
+pub use parallel::{extract_all_markdown_parallel, extract_all_text_parallel, ParallelExtractor};
 
 // Internal utilities
 pub(crate) mod utils {

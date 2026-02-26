@@ -72,6 +72,9 @@ pkcs8 = { version = "0.10", optional = true }         # PKCS#8 private keys
 signature = { version = "2.2", optional = true }      # Signature traits
 sha1 = { version = "0.10", optional = true }          # SHA-1 for legacy signatures
 
+# Parallel extraction
+rayon = { version = "1.10", optional = true }
+
 # Math and algorithms
 ndarray = { version = "0.17", optional = true, features = ["std"] }
 linfa = { version = "0.7", optional = true }
@@ -162,6 +165,9 @@ barcodes = ["dep:qrcode", "dep:barcoders"]
 # Office document conversion (DOCX, XLSX, PPTX)
 office = ["dep:calamine", "dep:zip"]
 
+# Parallel page extraction via rayon
+parallel = ["dep:rayon"]
+
 [profile.release]
 opt-level = 3
 lto = true
@@ -218,7 +224,7 @@ harness = false
 
 [package.metadata.docs.rs]
 # Document with safe features only (tesseract-rs fails on docs.rs sandbox)
-features = ["python", "logging", "debug-span-merging"]
+features = ["python", "logging", "debug-span-merging", "parallel"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 # Python packaging (Maturin)
