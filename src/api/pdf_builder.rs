@@ -527,6 +527,7 @@ impl Pdf {
     /// // Save changes
     /// doc.save("modified.pdf")?;
     /// ```
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let source_path = path.as_ref().to_path_buf();
         let editor = DocumentEditor::open(&path)?;
@@ -541,6 +542,7 @@ impl Pdf {
     /// Open an existing PDF file (legacy API, returns DocumentEditor directly).
     ///
     /// Prefer using `Pdf::open()` for the unified API with DOM access.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn open_editor(path: impl AsRef<Path>) -> Result<DocumentEditor> {
         DocumentEditor::open(path)
     }

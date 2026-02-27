@@ -13,7 +13,9 @@ use crate::object::{Object, ObjectRef};
 use crate::writer::{ContentStreamBuilder, ObjectSerializer};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::{BufWriter, Read, Seek, Write};
+#[cfg(not(target_arch = "wasm32"))]
+use std::io::BufWriter;
+use std::io::{Read, Seek, Write};
 use std::path::Path;
 
 /// Document metadata (Info dictionary).
@@ -518,7 +520,7 @@ struct AnnotationAppearance {
 }
 
 /// Information about an image on a page.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct ImageInfo {
     /// XObject name (e.g., "Im1")
     pub name: String,
@@ -551,6 +553,7 @@ impl DocumentEditor {
     ///
     /// let editor = DocumentEditor::open("document.pdf")?;
     /// ```
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let path_str = path.as_ref().to_string_lossy().to_string();
         let mut source = PdfDocument::open(path.as_ref())?;
@@ -590,6 +593,65 @@ impl DocumentEditor {
             deleted_form_fields: HashSet::new(),
             acroform_modified: false,
         })
+    }
+
+    /// Open a PDF document for editing from in-memory bytes.
+    ///
+    /// This is the equivalent of `open()` but works with byte data instead of a file path,
+    /// making it suitable for WASM environments where filesystem access is unavailable.
+    pub fn open_from_bytes(data: Vec<u8>) -> Result<Self> {
+        let mut source = PdfDocument::open_from_bytes(data)?;
+        let page_count = source.page_count()?;
+        let next_id = Self::find_max_object_id(&source) + 1;
+        let page_order: Vec<i32> = (0..page_count as i32).collect();
+
+        Ok(Self {
+            source,
+            source_path: String::new(),
+            modified_objects: HashMap::new(),
+            new_objects: Vec::new(),
+            next_object_id: next_id,
+            modified_info: None,
+            page_order,
+            original_page_count: page_count,
+            is_modified: false,
+            modified_content: HashMap::new(),
+            resource_manager: ResourceManager::new(),
+            structure_modified: false,
+            modified_annotations: HashMap::new(),
+            modified_page_props: HashMap::new(),
+            erase_regions: HashMap::new(),
+            flatten_annotations_pages: std::collections::HashSet::new(),
+            apply_redactions_pages: std::collections::HashSet::new(),
+            image_modifications: HashMap::new(),
+            flatten_forms_pages: std::collections::HashSet::new(),
+            remove_acroform: false,
+            embedded_files: Vec::new(),
+            modified_form_fields: HashMap::new(),
+            deleted_form_fields: HashSet::new(),
+            acroform_modified: false,
+        })
+    }
+
+    /// Save the document to an in-memory byte vector.
+    ///
+    /// This is the equivalent of `save()` but returns bytes instead of writing to a file,
+    /// making it suitable for WASM environments where filesystem access is unavailable.
+    pub fn save_to_bytes(&mut self) -> Result<Vec<u8>> {
+        self.save_to_bytes_with_options(SaveOptions::full_rewrite())
+    }
+
+    /// Save the document to an in-memory byte vector with specific options.
+    pub fn save_to_bytes_with_options(&mut self, options: SaveOptions) -> Result<Vec<u8>> {
+        use std::io::Cursor;
+        if options.incremental {
+            return Err(Error::InvalidPdf(
+                "Incremental saves are not supported for in-memory output".to_string(),
+            ));
+        }
+        let mut cursor = Cursor::new(Vec::new());
+        self.write_full_to_writer(&mut cursor, options.encryption.as_ref())?;
+        Ok(cursor.into_inner())
     }
 
     /// Find the maximum object ID in the document.
@@ -859,6 +921,7 @@ impl DocumentEditor {
     /// editor.merge_from("appendix.pdf")?;
     /// editor.save("combined.pdf")?;
     /// ```
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn merge_from(&mut self, source_path: impl AsRef<Path>) -> Result<usize> {
         // Open the source document
         let mut source_doc = PdfDocument::open(source_path.as_ref())?;
@@ -899,6 +962,7 @@ impl DocumentEditor {
     /// editor.merge_pages_from("source.pdf", &[0, 2, 4])?;  // Merge pages 1, 3, 5
     /// editor.save("combined.pdf")?;
     /// ```
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn merge_pages_from(
         &mut self,
         source_path: impl AsRef<Path>,
@@ -944,6 +1008,7 @@ impl DocumentEditor {
     }
 
     /// Write an incremental update to the PDF.
+    #[cfg(not(target_arch = "wasm32"))]
     fn write_incremental(&mut self, path: impl AsRef<Path>) -> Result<()> {
         // Read original file
         let original_bytes = self.read_source_bytes()?;
@@ -1056,27 +1121,26 @@ impl DocumentEditor {
     }
 
     /// Write a full rewrite of the PDF.
+    #[cfg(not(target_arch = "wasm32"))]
     fn write_full(
         &mut self,
         path: impl AsRef<Path>,
         encryption_config: Option<&EncryptionConfig>,
     ) -> Result<()> {
+        let file = File::create(path.as_ref())?;
+        let mut writer = BufWriter::new(file);
+        self.write_full_to_writer(&mut writer, encryption_config)
+    }
+
+    /// Write a full rewrite of the PDF to a generic writer.
+    fn write_full_to_writer(
+        &mut self,
+        writer: &mut (impl Write + Seek),
+        encryption_config: Option<&EncryptionConfig>,
+    ) -> Result<()> {
         use crate::encryption::{
             generate_file_id, Algorithm, EncryptDictBuilder, EncryptionWriteHandler,
         };
-
-        // For full rewrite, we need to:
-        // 1. Collect all objects (original + modified + new)
-        // 2. Optionally remove unused objects
-        // 3. Write complete new PDF structure
-
-        // This is a more complex operation that requires:
-        // - Traversing all reachable objects from the catalog
-        // - Updating object references if IDs change
-        // - Writing new header, body, xref, trailer
-
-        let file = File::create(path.as_ref())?;
-        let mut writer = BufWriter::new(file);
 
         // Write PDF header
         let (major, minor) = self.version();
@@ -1913,7 +1977,7 @@ impl DocumentEditor {
                                                             let mods = self
                                                                 .image_modifications
                                                                 .get(&page_index)
-                                                                .expect("page has image modifications");
+                                                                .unwrap();
                                                             match self.rewrite_content_stream_with_image_mods(&content_data, mods) {
                                                                 Ok(modified_content) => {
                                                                     let modified_stream = Object::Stream {
@@ -1968,7 +2032,7 @@ impl DocumentEditor {
                                                         let mods = self
                                                             .image_modifications
                                                             .get(&page_index)
-                                                            .expect("page has image modifications");
+                                                            .unwrap();
                                                         for item in arr {
                                                             if let Object::Reference(ref_obj) = item
                                                             {
@@ -2456,7 +2520,7 @@ impl DocumentEditor {
 
         // Write info dictionary if modified
         let info_ref = if self.modified_info.is_some() {
-            let info = self.modified_info.clone().expect("checked is_some above");
+            let info = self.modified_info.clone().unwrap();
             let info_id = self.allocate_object_id();
             let info_obj = info.to_object();
             let offset = writer.stream_position()?;
@@ -5606,12 +5670,20 @@ impl EditableDocument for DocumentEditor {
         self.save_with_options(path, SaveOptions::full_rewrite())
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn save_with_options(&mut self, path: impl AsRef<Path>, options: SaveOptions) -> Result<()> {
         if options.incremental {
             self.write_incremental(path)
         } else {
             self.write_full(path, options.encryption.as_ref())
         }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn save_with_options(&mut self, _path: impl AsRef<Path>, _options: SaveOptions) -> Result<()> {
+        Err(Error::InvalidPdf(
+            "Filesystem save is not available in WASM. Use save_to_bytes() instead.".to_string(),
+        ))
     }
 }
 

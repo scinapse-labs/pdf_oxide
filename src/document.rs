@@ -555,6 +555,7 @@ impl PdfDocument {
     ///
     /// Currently, the profile is not used at the document level but is reserved
     /// for future integration with document-type-specific extraction settings.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn open_with_config(path: impl AsRef<Path>, _config: impl std::any::Any) -> Result<Self> {
         Self::open(path)
     }
@@ -6798,6 +6799,7 @@ impl PdfDocument {
     ///
     /// Each image is saved as a separate file in `output_dir` with the given
     /// `prefix` and an incrementing index starting from `start_index`.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn extract_images_to_files(
         &mut self,
         page_index: usize,
