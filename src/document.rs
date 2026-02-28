@@ -5972,6 +5972,94 @@ impl PdfDocument {
         Ok(())
     }
 
+    /// Extract tables from a page using structure tree and spatial detection.
+    ///
+    /// Tries two strategies in order:
+    /// 1. **Structure tree** (tagged PDFs): Finds Table elements in the structure
+    ///    tree and extracts cell content via MCID matching.
+    /// 2. **Spatial detection** (untagged PDFs): Uses X/Y coordinate clustering
+    ///    to detect grid-aligned text as tables.
+    ///
+    /// Returns early with structure tree tables if found (high confidence).
+    fn extract_page_tables(
+        &mut self,
+        page_index: usize,
+        spans: &[TextSpan],
+        options: &crate::converters::ConversionOptions,
+    ) -> Vec<crate::structure::ExtractedTable> {
+        // Strategy 1: Structure tree (tagged PDFs)
+        if let Ok(Some(struct_tree)) = self.structure_tree() {
+            let table_elems =
+                crate::structure::find_table_elements(&struct_tree, page_index as u32);
+            if !table_elems.is_empty() {
+                let mut tables = Vec::new();
+                for table_elem in table_elems {
+                    match crate::structure::extract_table_from_spans(table_elem, spans) {
+                        Ok(mut table) if !table.is_empty() => {
+                            // Compute bbox from spans matching the table's MCIDs
+                            if table.bbox.is_none() {
+                                let all_mcids: Vec<u32> = table
+                                    .rows
+                                    .iter()
+                                    .flat_map(|r| r.cells.iter().flat_map(|c| c.mcids.iter().copied()))
+                                    .collect();
+                                if !all_mcids.is_empty() {
+                                    let mut min_x = f32::INFINITY;
+                                    let mut min_y = f32::INFINITY;
+                                    let mut max_x = f32::NEG_INFINITY;
+                                    let mut max_y = f32::NEG_INFINITY;
+                                    for span in spans {
+                                        if let Some(mcid) = span.mcid {
+                                            if all_mcids.contains(&mcid) {
+                                                min_x = min_x.min(span.bbox.x);
+                                                min_y = min_y.min(span.bbox.y);
+                                                max_x = max_x.max(span.bbox.x + span.bbox.width);
+                                                max_y = max_y.max(span.bbox.y + span.bbox.height);
+                                            }
+                                        }
+                                    }
+                                    if min_x < max_x && min_y < max_y {
+                                        table.bbox = Some(crate::geometry::Rect::new(
+                                            min_x,
+                                            min_y,
+                                            max_x - min_x,
+                                            max_y - min_y,
+                                        ));
+                                    }
+                                }
+                            }
+                            tables.push(table);
+                        },
+                        _ => {},
+                    }
+                }
+                if !tables.is_empty() {
+                    log::debug!(
+                        "Found {} table(s) via structure tree for page {}",
+                        tables.len(),
+                        page_index
+                    );
+                    return tables;
+                }
+            }
+        }
+
+        // Strategy 2: Spatial detection (untagged PDFs)
+        let config = options
+            .table_detection_config
+            .clone()
+            .unwrap_or_default();
+        let tables = crate::structure::detect_tables_from_spans(spans, &config);
+        if !tables.is_empty() {
+            log::debug!(
+                "Found {} table(s) via spatial detection for page {}",
+                tables.len(),
+                page_index
+            );
+        }
+        tables
+    }
+
     /// Convert a page to Markdown format.
     ///
     /// Extracts text from the specified page and converts it to Markdown with
@@ -6024,15 +6112,21 @@ impl PdfDocument {
             spans.extend(self.extract_widget_spans(page_index));
         }
 
-        // Step 2: Create pipeline config from options (using adapter from Phase 2)
+        // Step 2: Extract tables if enabled
+        let tables = if options.extract_tables {
+            self.extract_page_tables(page_index, &spans, options)
+        } else {
+            Vec::new()
+        };
+
+        // Step 3: Create pipeline config from options (using adapter from Phase 2)
         let pipeline_config = TextPipelineConfig::from_conversion_options(options);
 
-        // Step 3: Handle structure tree context for reading order
+        // Step 4: Handle structure tree context for reading order
         // Try to extract MCID order for StructureTreeFirst mode
         if let Ok(Some(struct_tree)) = self.structure_tree() {
             match extract_reading_order(&struct_tree, page_index as u32) {
                 Ok(mcid_order) if !mcid_order.is_empty() => {
-                    // Update context with extracted MCIDs
                     log::debug!(
                         "Extracted {} MCIDs from structure tree for page {}",
                         mcid_order.len(),
@@ -6040,7 +6134,6 @@ impl PdfDocument {
                     );
                 },
                 _ => {
-                    // No MCIDs found - that's OK, fallback will happen in strategy
                     log::debug!(
                         "No MCIDs found for page {}, reading order strategy will use geometric fallback",
                         page_index
@@ -6053,20 +6146,21 @@ impl PdfDocument {
             );
         }
 
-        // Step 4: Create pipeline with config
+        // Step 5: Create pipeline with config
         let pipeline = TextPipeline::with_config(pipeline_config.clone());
 
-        // Step 5: Build reading order context
+        // Step 6: Build reading order context
         let context = ReadingOrderContext::new().with_page(page_index as u32);
 
-        // Step 6: Process through pipeline (applies reading order strategy)
+        // Step 7: Process through pipeline (applies reading order strategy)
         let ordered_spans = pipeline.process(spans, context)?;
 
-        // Step 7: Use pipeline converter
+        // Step 8: Use pipeline converter with tables
         let converter = MarkdownOutputConverter::new();
-        let mut markdown = converter.convert(&ordered_spans, &pipeline_config)?;
+        let mut markdown =
+            converter.convert_with_tables(&ordered_spans, &tables, &pipeline_config)?;
 
-        // Step 8: Extract and include images if enabled
+        // Step 9: Extract and include images if enabled
         if options.include_images {
             let images = self.extract_images(page_index).unwrap_or_default();
             if !images.is_empty() {
@@ -6276,28 +6370,35 @@ impl PdfDocument {
             spans.extend(self.extract_widget_spans(page_index));
         }
 
-        // Step 2: Create pipeline config from options (using adapter from Phase 2)
+        // Step 2: Extract tables if enabled
+        let tables = if options.extract_tables {
+            self.extract_page_tables(page_index, &spans, options)
+        } else {
+            Vec::new()
+        };
+
+        // Step 3: Create pipeline config from options (using adapter from Phase 2)
         let pipeline_config = TextPipelineConfig::from_conversion_options(options);
 
-        // Step 3: Create pipeline with config
+        // Step 4: Create pipeline with config
         let pipeline = TextPipeline::with_config(pipeline_config.clone());
 
-        // Step 4: Build reading order context
+        // Step 5: Build reading order context
         let context = ReadingOrderContext::new().with_page(page_index as u32);
 
-        // Step 5: Process through pipeline (applies reading order strategy)
+        // Step 6: Process through pipeline (applies reading order strategy)
         let ordered_spans = pipeline.process(spans, context)?;
 
-        // Step 6: Use pipeline converter
+        // Step 7: Use pipeline converter with tables
         let converter = HtmlOutputConverter::new();
-        let mut html = converter.convert(&ordered_spans, &pipeline_config)?;
+        let mut html =
+            converter.convert_with_tables(&ordered_spans, &tables, &pipeline_config)?;
 
-        // Step 7: Extract and embed images if enabled
+        // Step 8: Extract and embed images if enabled
         if options.include_images {
             let images = self.extract_images(page_index).unwrap_or_default();
             if !images.is_empty() {
                 let image_html = self.generate_image_html(&images, options, page_index)?;
-                // Insert images before closing </body> or at end
                 if let Some(pos) = html.rfind("</body>") {
                     html.insert_str(pos, &image_html);
                 } else {

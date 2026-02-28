@@ -5,6 +5,7 @@
 use crate::error::Result;
 use crate::layout::FontWeight;
 use crate::pipeline::{OrderedTextSpan, TextPipelineConfig};
+use crate::structure::table_extractor::ExtractedTable;
 use crate::text::HyphenationHandler;
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -155,58 +156,87 @@ impl MarkdownOutputConverter {
         }
     }
 
-    /// Detect if text spans form a grid structure (potential table).
-    ///
-    /// A simple table detection heuristic: multiple rows with aligned columns.
-    /// Returns a vector of (row_indices, col_count) tuples for table rows.
-    fn detect_table_structure(&self, sorted: &[&OrderedTextSpan]) -> Vec<(Vec<usize>, usize)> {
-        if sorted.len() < 4 {
-            return Vec::new(); // Minimum 2x2 table
+    /// Check if a span's bbox overlaps with any table region.
+    fn span_in_table(&self, span: &OrderedTextSpan, tables: &[ExtractedTable]) -> Option<usize> {
+        let sx = span.span.bbox.x;
+        let sy = span.span.bbox.y;
+
+        for (i, table) in tables.iter().enumerate() {
+            if let Some(ref bbox) = table.bbox {
+                // Use generous tolerance for bbox overlap
+                let tolerance = 2.0;
+                if sx >= bbox.x - tolerance
+                    && sx <= bbox.x + bbox.width + tolerance
+                    && sy >= bbox.y - tolerance
+                    && sy <= bbox.y + bbox.height + tolerance
+                {
+                    return Some(i);
+                }
+            }
+        }
+        None
+    }
+
+    /// Render an ExtractedTable as a markdown table string.
+    fn render_table_markdown(table: &ExtractedTable) -> String {
+        if table.rows.is_empty() {
+            return String::new();
         }
 
-        let mut rows: Vec<Vec<usize>> = Vec::new();
-        let mut current_row: Vec<usize> = Vec::new();
-        let mut current_y = sorted[0].span.bbox.y;
+        let mut output = String::new();
 
-        for (idx, span) in sorted.iter().enumerate() {
-            let y_threshold = span.span.font_size * 0.5;
-            if (current_y - span.span.bbox.y).abs() <= y_threshold {
-                // Same line
-                current_row.push(idx);
-            } else {
-                // New line
-                if !current_row.is_empty() {
-                    rows.push(current_row.clone());
-                    current_row.clear();
+        // Determine header row index - use first row if has_header, or first is_header row
+        let header_end = if table.has_header {
+            table
+                .rows
+                .iter()
+                .position(|r| !r.is_header)
+                .unwrap_or(1)
+        } else {
+            // Treat first row as header for markdown (markdown requires a header row)
+            1
+        };
+
+        for (row_idx, row) in table.rows.iter().enumerate() {
+            output.push('|');
+            for cell in &row.cells {
+                output.push(' ');
+                // Escape pipe characters in cell text
+                let text = cell.text.replace('|', "\\|");
+                let text = text.replace('\n', " ");
+                output.push_str(text.trim());
+                output.push(' ');
+                // Handle colspan by adding extra | separators
+                for _ in 1..cell.colspan {
+                    output.push_str("| ");
                 }
-                current_row.push(idx);
-                current_y = span.span.bbox.y;
+                output.push('|');
+            }
+            output.push('\n');
+
+            // Add header separator after header rows
+            if row_idx + 1 == header_end {
+                output.push('|');
+                for cell in &row.cells {
+                    for _ in 0..cell.colspan {
+                        output.push_str("---|");
+                    }
+                }
+                output.push('\n');
             }
         }
 
-        if !current_row.is_empty() {
-            rows.push(current_row);
-        }
-
-        // A table should have multiple rows with consistent column count
-        if rows.len() >= 2 && rows.iter().all(|r| r.len() == rows[0].len()) {
-            let col_count = rows[0].len();
-            rows.into_iter().map(|r| (r, col_count)).collect()
-        } else {
-            Vec::new()
-        }
+        output
     }
-}
 
-impl Default for MarkdownOutputConverter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl OutputConverter for MarkdownOutputConverter {
-    fn convert(&self, spans: &[OrderedTextSpan], config: &TextPipelineConfig) -> Result<String> {
-        if spans.is_empty() {
+    /// Core rendering logic shared between convert() and convert_with_tables().
+    fn render_spans(
+        &self,
+        spans: &[OrderedTextSpan],
+        tables: &[ExtractedTable],
+        config: &TextPipelineConfig,
+    ) -> Result<String> {
+        if spans.is_empty() && tables.is_empty() {
             return Ok(String::new());
         }
 
@@ -219,7 +249,6 @@ impl OutputConverter for MarkdownOutputConverter {
             let sizes: Vec<f32> = sorted.iter().map(|s| s.span.font_size).collect();
             let mut sizes_sorted = sizes.clone();
             sizes_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
-            // Use median as base size
             sizes_sorted
                 .get(sizes_sorted.len() / 2)
                 .copied()
@@ -228,85 +257,50 @@ impl OutputConverter for MarkdownOutputConverter {
             12.0
         };
 
-        // Detect table structure if enabled
-        let table_rows = if config.output.extract_tables {
-            self.detect_table_structure(&sorted)
-        } else {
-            Vec::new()
-        };
-
-        // Build set of all table cell indices
-        let table_set: std::collections::HashSet<usize> = table_rows
-            .iter()
-            .flat_map(|(row, _)| row.iter().copied())
-            .collect();
+        // Track which tables have been rendered
+        let mut tables_rendered = vec![false; tables.len()];
 
         let mut result = String::new();
         let mut prev_span: Option<&OrderedTextSpan> = None;
         let mut current_line = String::new();
 
-        for (idx, span) in sorted.iter().enumerate() {
-            // Skip spans that are part of table (they'll be formatted separately)
-            if table_set.contains(&idx) {
-                // Format table once when we encounter the first table cell
-                if let Some((first_row, _)) = table_rows.first() {
-                    if idx == first_row[0] {
-                        // Flush current line first
+        for span in sorted.iter() {
+            // Check if this span belongs to a table region
+            if !tables.is_empty() {
+                if let Some(table_idx) = self.span_in_table(span, tables) {
+                    if !tables_rendered[table_idx] {
+                        // Flush current line
                         if !current_line.is_empty() {
                             result.push_str(current_line.trim());
                             result.push_str("\n\n");
                             current_line.clear();
                         }
 
-                        // Format and add the table
-                        let mut table_output = String::new();
-                        for (row_idx, (row_indices, _)) in table_rows.iter().enumerate() {
-                            table_output.push('|');
-                            for &cell_idx in row_indices {
-                                let text = sorted[cell_idx].span.text.trim();
-                                table_output.push(' ');
-                                table_output.push_str(text);
-                                table_output.push(' ');
-                                table_output.push('|');
-                            }
-                            table_output.push('\n');
-
-                            // Add header separator after first row
-                            if row_idx == 0 {
-                                table_output.push('|');
-                                for _ in row_indices {
-                                    table_output.push_str("---|");
-                                }
-                                table_output.push('\n');
-                            }
-                        }
-
-                        result.push_str(&table_output);
+                        // Render the table
+                        let table_md = Self::render_table_markdown(&tables[table_idx]);
+                        result.push_str(&table_md);
                         result.push('\n');
+                        tables_rendered[table_idx] = true;
                         prev_span = None;
-                        continue;
                     }
+                    // Skip this span (it's part of a table)
+                    continue;
                 }
-                continue; // Skip other table cells
             }
 
             // Check for paragraph break
             if let Some(prev) = prev_span {
                 if self.is_paragraph_break(span, prev) {
-                    // End current line and add paragraph break
                     if !current_line.is_empty() {
                         result.push_str(current_line.trim());
                         result.push_str("\n\n");
                         current_line.clear();
                     }
                 } else {
-                    // Same paragraph - check if new line
                     let same_line =
                         (span.span.bbox.y - prev.span.bbox.y).abs() < span.span.font_size * 0.5;
                     if !same_line {
-                        // New line within paragraph
                         if config.output.preserve_layout {
-                            // Calculate spacing to preserve column alignment
                             let spacing = (span.span.bbox.x - prev.span.bbox.x).max(0.0) as usize;
                             for _ in 0..spacing.min(20) {
                                 current_line.push(' ');
@@ -320,20 +314,17 @@ impl OutputConverter for MarkdownOutputConverter {
 
             // Check for heading
             if config.output.detect_headings {
-                // Try absolute heading first, then ratio-based
                 let level = self
                     .heading_level_absolute(span)
                     .or_else(|| self.heading_level_ratio(span, base_font_size));
 
                 if let Some(level) = level {
-                    // Flush current content
                     if !current_line.is_empty() {
                         result.push_str(current_line.trim());
                         result.push_str("\n\n");
                         current_line.clear();
                     }
 
-                    // Add heading
                     let prefix = "#".repeat(level as usize);
                     result.push_str(&format!("{} {}\n\n", prefix, span.span.text.trim()));
                     prev_span = None;
@@ -344,17 +335,14 @@ impl OutputConverter for MarkdownOutputConverter {
             // Format text with bold/italic and apply linkification
             let mut text = span.span.text.as_str();
 
-            // Normalize whitespace if not preserving layout
             let normalized;
             if !config.output.preserve_layout {
                 normalized = self.normalize_whitespace(text);
                 text = &normalized;
             }
 
-            // Apply linkification
             let linkified = self.linkify(text);
 
-            // Determine formatting
             let is_bold = self.is_bold(span, config);
             let is_italic = self.is_italic(span);
             let formatted = self.apply_formatting(&linkified, is_bold, is_italic);
@@ -362,6 +350,20 @@ impl OutputConverter for MarkdownOutputConverter {
             current_line.push_str(&formatted);
 
             prev_span = Some(span);
+        }
+
+        // Render any tables that weren't matched to spans (e.g., all spans were in tables)
+        for (i, table) in tables.iter().enumerate() {
+            if !tables_rendered[i] && !table.is_empty() {
+                if !current_line.is_empty() {
+                    result.push_str(current_line.trim());
+                    result.push_str("\n\n");
+                    current_line.clear();
+                }
+                let table_md = Self::render_table_markdown(table);
+                result.push_str(&table_md);
+                result.push('\n');
+            }
         }
 
         // Flush remaining content
@@ -374,7 +376,6 @@ impl OutputConverter for MarkdownOutputConverter {
         let mut final_result = if config.output.preserve_layout {
             result
         } else {
-            // Clean up excessive newlines while preserving paragraph breaks
             let cleaned = result
                 .split("\n\n")
                 .map(|para| para.trim())
@@ -382,7 +383,6 @@ impl OutputConverter for MarkdownOutputConverter {
                 .collect::<Vec<_>>()
                 .join("\n\n");
 
-            // Preserve final newline if the original had one
             if result.ends_with('\n') && !cleaned.ends_with('\n') {
                 format!("{}\n", cleaned)
             } else {
@@ -397,6 +397,27 @@ impl OutputConverter for MarkdownOutputConverter {
         }
 
         Ok(final_result)
+    }
+}
+
+impl Default for MarkdownOutputConverter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl OutputConverter for MarkdownOutputConverter {
+    fn convert(&self, spans: &[OrderedTextSpan], config: &TextPipelineConfig) -> Result<String> {
+        self.render_spans(spans, &[], config)
+    }
+
+    fn convert_with_tables(
+        &self,
+        spans: &[OrderedTextSpan],
+        tables: &[ExtractedTable],
+        config: &TextPipelineConfig,
+    ) -> Result<String> {
+        self.render_spans(spans, tables, config)
     }
 
     fn name(&self) -> &'static str {
@@ -413,6 +434,7 @@ mod tests {
     use super::*;
     use crate::geometry::Rect;
     use crate::layout::{Color, TextSpan};
+    use crate::structure::table_extractor::{TableCell, TableRow};
 
     fn make_span(
         text: &str,
@@ -484,5 +506,285 @@ mod tests {
         let result = converter.convert(&spans, &config).unwrap();
         // Should not contain bold markers
         assert!(!result.contains("**"));
+    }
+
+    #[test]
+    fn test_convert_with_tables_renders_markdown_table() {
+        let converter = MarkdownOutputConverter::new();
+        let config = TextPipelineConfig::default();
+
+        let mut table = ExtractedTable::new();
+        table.bbox = Some(Rect::new(10.0, 50.0, 200.0, 100.0));
+        table.col_count = 2;
+        table.has_header = true;
+
+        let mut header = TableRow::new(true);
+        header.add_cell(TableCell::new("Name".to_string(), true));
+        header.add_cell(TableCell::new("Value".to_string(), true));
+        table.add_row(header);
+
+        let mut data = TableRow::new(false);
+        data.add_cell(TableCell::new("A".to_string(), false));
+        data.add_cell(TableCell::new("1".to_string(), false));
+        table.add_row(data);
+
+        let result = converter
+            .convert_with_tables(&[], &[table], &config)
+            .unwrap();
+
+        assert!(result.contains("| Name |"));
+        assert!(result.contains("| Value |"));
+        assert!(result.contains("---|"));
+        assert!(result.contains("| A |"));
+        assert!(result.contains("| 1 |"));
+    }
+
+    // ============================================================================
+    // render_table_markdown() tests
+    // ============================================================================
+
+    #[test]
+    fn test_render_table_markdown_empty() {
+        let table = ExtractedTable::new();
+        let result = MarkdownOutputConverter::render_table_markdown(&table);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_render_table_markdown_single_row_no_header() {
+        let mut table = ExtractedTable::new();
+        let mut row = TableRow::new(false);
+        row.add_cell(TableCell::new("A".to_string(), false));
+        row.add_cell(TableCell::new("B".to_string(), false));
+        table.add_row(row);
+
+        let result = MarkdownOutputConverter::render_table_markdown(&table);
+        assert!(result.contains("| A |"));
+        assert!(result.contains("| B |"));
+        // First row treated as header by default in markdown
+        assert!(result.contains("---|"));
+    }
+
+    #[test]
+    fn test_render_table_markdown_with_colspan() {
+        let mut table = ExtractedTable::new();
+        table.has_header = true;
+        let mut header = TableRow::new(true);
+        header.add_cell(TableCell::new("Wide".to_string(), true).with_colspan(2));
+        table.add_row(header);
+
+        let mut data = TableRow::new(false);
+        data.add_cell(TableCell::new("Left".to_string(), false));
+        data.add_cell(TableCell::new("Right".to_string(), false));
+        table.add_row(data);
+
+        let result = MarkdownOutputConverter::render_table_markdown(&table);
+        // Colspan cell should produce extra | separators
+        assert!(result.contains("| Wide |"));
+        assert!(result.contains("---|---|"));
+    }
+
+    #[test]
+    fn test_render_table_markdown_escapes_pipes() {
+        let mut table = ExtractedTable::new();
+        let mut row = TableRow::new(false);
+        row.add_cell(TableCell::new("A|B".to_string(), false));
+        table.add_row(row);
+
+        let result = MarkdownOutputConverter::render_table_markdown(&table);
+        assert!(result.contains("A\\|B"), "Pipes should be escaped: {}", result);
+    }
+
+    #[test]
+    fn test_render_table_markdown_replaces_newlines() {
+        let mut table = ExtractedTable::new();
+        let mut row = TableRow::new(false);
+        row.add_cell(TableCell::new("Line1\nLine2".to_string(), false));
+        table.add_row(row);
+
+        let result = MarkdownOutputConverter::render_table_markdown(&table);
+        assert!(!result.contains("Line1\nLine2"), "Newlines in cells should be replaced");
+        assert!(result.contains("Line1 Line2"));
+    }
+
+    #[test]
+    fn test_render_table_markdown_trims_whitespace() {
+        let mut table = ExtractedTable::new();
+        let mut row = TableRow::new(false);
+        row.add_cell(TableCell::new("  padded  ".to_string(), false));
+        table.add_row(row);
+
+        let result = MarkdownOutputConverter::render_table_markdown(&table);
+        assert!(result.contains("| padded |"));
+    }
+
+    #[test]
+    fn test_render_table_markdown_multiple_header_rows() {
+        let mut table = ExtractedTable::new();
+        table.has_header = true;
+
+        let mut h1 = TableRow::new(true);
+        h1.add_cell(TableCell::new("H1".to_string(), true));
+        table.add_row(h1);
+
+        let mut h2 = TableRow::new(true);
+        h2.add_cell(TableCell::new("H2".to_string(), true));
+        table.add_row(h2);
+
+        let mut d1 = TableRow::new(false);
+        d1.add_cell(TableCell::new("D1".to_string(), false));
+        table.add_row(d1);
+
+        let result = MarkdownOutputConverter::render_table_markdown(&table);
+        // Separator should appear after last header row (row_idx == 1)
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines.len(), 4); // H1, H2, separator, D1
+        assert!(lines[2].contains("---|"));
+    }
+
+    // ============================================================================
+    // span_in_table() tests
+    // ============================================================================
+
+    #[test]
+    fn test_span_in_table_match() {
+        let converter = MarkdownOutputConverter::new();
+        let span = make_span("text", 50.0, 70.0, 12.0, FontWeight::Normal);
+
+        let mut table = ExtractedTable::new();
+        table.bbox = Some(Rect::new(10.0, 50.0, 200.0, 100.0));
+
+        assert_eq!(converter.span_in_table(&span, &[table]), Some(0));
+    }
+
+    #[test]
+    fn test_span_in_table_no_match() {
+        let converter = MarkdownOutputConverter::new();
+        let span = make_span("text", 500.0, 500.0, 12.0, FontWeight::Normal);
+
+        let mut table = ExtractedTable::new();
+        table.bbox = Some(Rect::new(10.0, 50.0, 200.0, 100.0));
+
+        assert_eq!(converter.span_in_table(&span, &[table]), None);
+    }
+
+    #[test]
+    fn test_span_in_table_none_bbox() {
+        let converter = MarkdownOutputConverter::new();
+        let span = make_span("text", 50.0, 70.0, 12.0, FontWeight::Normal);
+
+        let table = ExtractedTable::new(); // No bbox
+        assert_eq!(converter.span_in_table(&span, &[table]), None);
+    }
+
+    #[test]
+    fn test_span_in_table_tolerance() {
+        let converter = MarkdownOutputConverter::new();
+        // Span at bbox edge minus tolerance (2.0)
+        let span = make_span("text", 8.5, 48.5, 12.0, FontWeight::Normal);
+
+        let mut table = ExtractedTable::new();
+        table.bbox = Some(Rect::new(10.0, 50.0, 200.0, 100.0));
+
+        assert_eq!(
+            converter.span_in_table(&span, &[table]),
+            Some(0),
+            "Should match within tolerance"
+        );
+    }
+
+    #[test]
+    fn test_span_in_table_multiple_tables() {
+        let converter = MarkdownOutputConverter::new();
+        let span = make_span("text", 350.0, 70.0, 12.0, FontWeight::Normal);
+
+        let mut t1 = ExtractedTable::new();
+        t1.bbox = Some(Rect::new(10.0, 50.0, 200.0, 100.0));
+
+        let mut t2 = ExtractedTable::new();
+        t2.bbox = Some(Rect::new(300.0, 50.0, 200.0, 100.0));
+
+        assert_eq!(converter.span_in_table(&span, &[t1, t2]), Some(1));
+    }
+
+    // ============================================================================
+    // convert_with_tables() integration tests
+    // ============================================================================
+
+    #[test]
+    fn test_convert_with_tables_mixed_content() {
+        let converter = MarkdownOutputConverter::new();
+        let config = TextPipelineConfig::default();
+
+        // Text before the table
+        let mut span_before = make_span("Before table", 10.0, 200.0, 12.0, FontWeight::Normal);
+        span_before.reading_order = 0;
+
+        // Text after the table (lower Y = later in reading order)
+        let mut span_after = make_span("After table", 10.0, 20.0, 12.0, FontWeight::Normal);
+        span_after.reading_order = 2;
+
+        // Text inside table region (should be excluded)
+        let mut span_in_table = make_span("In table", 50.0, 70.0, 12.0, FontWeight::Normal);
+        span_in_table.reading_order = 1;
+
+        let mut table = ExtractedTable::new();
+        table.bbox = Some(Rect::new(10.0, 50.0, 200.0, 100.0));
+        table.has_header = true;
+        let mut header = TableRow::new(true);
+        header.add_cell(TableCell::new("Col".to_string(), true));
+        table.add_row(header);
+        let mut data = TableRow::new(false);
+        data.add_cell(TableCell::new("Val".to_string(), false));
+        table.add_row(data);
+
+        let result = converter
+            .convert_with_tables(
+                &[span_before, span_in_table, span_after],
+                &[table],
+                &config,
+            )
+            .unwrap();
+
+        assert!(result.contains("Before table"), "Should contain text before table");
+        assert!(result.contains("| Col |"), "Should contain table");
+        assert!(result.contains("After table"), "Should contain text after table");
+        assert!(!result.contains("In table"), "Should exclude span inside table region");
+    }
+
+    #[test]
+    fn test_convert_with_tables_no_tables_is_same_as_convert() {
+        let converter = MarkdownOutputConverter::new();
+        let config = TextPipelineConfig::default();
+        let spans = vec![make_span("Hello", 0.0, 100.0, 12.0, FontWeight::Normal)];
+
+        let result_convert = converter.convert(&spans, &config).unwrap();
+        let result_with_tables = converter
+            .convert_with_tables(&spans, &[], &config)
+            .unwrap();
+
+        assert_eq!(result_convert, result_with_tables);
+    }
+
+    #[test]
+    fn test_convert_with_tables_multiple_tables() {
+        let converter = MarkdownOutputConverter::new();
+        let config = TextPipelineConfig::default();
+
+        let make_table = |x: f32, text: &str| -> ExtractedTable {
+            let mut t = ExtractedTable::new();
+            t.bbox = Some(Rect::new(x, 50.0, 100.0, 50.0));
+            let mut row = TableRow::new(false);
+            row.add_cell(TableCell::new(text.to_string(), false));
+            t.add_row(row);
+            t
+        };
+
+        let result = converter
+            .convert_with_tables(&[], &[make_table(10.0, "T1"), make_table(200.0, "T2")], &config)
+            .unwrap();
+
+        assert!(result.contains("| T1 |"), "Should contain first table");
+        assert!(result.contains("| T2 |"), "Should contain second table");
     }
 }

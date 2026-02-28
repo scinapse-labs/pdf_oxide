@@ -13,6 +13,7 @@
 //!   - TD: Table data cell
 
 use crate::error::Error;
+use crate::geometry::Rect;
 use crate::layout::TextBlock;
 use crate::structure::types::{StructChild, StructElem, StructType};
 
@@ -27,6 +28,9 @@ pub struct ExtractedTable {
 
     /// Number of columns (inferred from first row)
     pub col_count: usize,
+
+    /// Bounding box of the table region (used to exclude table spans from normal rendering)
+    pub bbox: Option<Rect>,
 }
 
 /// A single row in a table.
@@ -71,6 +75,7 @@ impl ExtractedTable {
             rows: Vec::new(),
             has_header: false,
             col_count: 0,
+            bbox: None,
         }
     }
 
@@ -131,6 +136,101 @@ impl TableCell {
     pub fn add_mcid(&mut self, mcid: u32) {
         self.mcids.push(mcid);
     }
+}
+
+/// Find all Table structure elements in the structure tree for a given page.
+///
+/// Recursively walks the structure tree to collect StructElem nodes where
+/// `struct_type == StructType::Table` and the element (or any descendant)
+/// has marked content on the specified page.
+///
+/// # Arguments
+/// * `struct_tree` - The structure tree root
+/// * `page_num` - Page number to match (0-based)
+///
+/// # Returns
+/// * `Vec<&StructElem>` - Table elements found for the page
+pub fn find_table_elements(struct_tree: &crate::structure::types::StructTreeRoot, page_num: u32) -> Vec<&StructElem> {
+    let mut tables = Vec::new();
+    for elem in &struct_tree.root_elements {
+        collect_table_elements(elem, page_num, &mut tables);
+    }
+    tables
+}
+
+/// Recursively collect Table elements that have content on the given page.
+fn collect_table_elements<'a>(elem: &'a StructElem, page_num: u32, tables: &mut Vec<&'a StructElem>) {
+    if elem.struct_type == StructType::Table {
+        if element_has_page_content(elem, page_num) {
+            tables.push(elem);
+        }
+        return; // Don't recurse into table children looking for nested tables
+    }
+
+    for child in &elem.children {
+        if let StructChild::StructElem(child_elem) = child {
+            collect_table_elements(child_elem, page_num, tables);
+        }
+    }
+}
+
+/// Check if a structure element or any descendant has marked content on the given page.
+fn element_has_page_content(elem: &StructElem, page_num: u32) -> bool {
+    // Check the element's own page attribute
+    if elem.page == Some(page_num) {
+        return true;
+    }
+
+    for child in &elem.children {
+        match child {
+            StructChild::MarkedContentRef { page, .. } => {
+                if *page == page_num {
+                    return true;
+                }
+            },
+            StructChild::StructElem(child_elem) => {
+                if element_has_page_content(child_elem, page_num) {
+                    return true;
+                }
+            },
+            StructChild::ObjectRef(_, _) => {},
+        }
+    }
+
+    false
+}
+
+/// Extract a table from a structure element tree using TextSpans (MCID matching).
+///
+/// Converts TextSpans to a format suitable for MCID-based cell text extraction,
+/// then delegates to the standard `extract_table` function.
+///
+/// # Arguments
+/// * `table_elem` - The Table structure element
+/// * `spans` - Text spans from the page (with MCID values)
+///
+/// # Returns
+/// * `ExtractedTable` containing all rows and cells
+pub fn extract_table_from_spans(
+    table_elem: &StructElem,
+    spans: &[crate::layout::TextSpan],
+) -> Result<ExtractedTable, Error> {
+    // Convert spans to TextBlocks for MCID matching
+    let text_blocks: Vec<TextBlock> = spans
+        .iter()
+        .filter(|s| s.mcid.is_some())
+        .map(|s| TextBlock {
+            chars: Vec::new(),
+            bbox: s.bbox,
+            text: s.text.clone(),
+            avg_font_size: s.font_size,
+            dominant_font: s.font_name.clone(),
+            is_bold: s.font_weight.is_bold(),
+            is_italic: s.is_italic,
+            mcid: s.mcid,
+        })
+        .collect();
+    extract_table(table_elem, &text_blocks)
 }
 
 /// Extract a table from a structure element tree.
@@ -309,6 +409,7 @@ fn collect_mcids(elem: &StructElem, mcids: &mut Vec<u32>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::structure::types::StructTreeRoot;
 
     #[test]
     fn test_extracted_table_new() {
@@ -316,6 +417,21 @@ mod tests {
         assert!(table.is_empty());
         assert_eq!(table.col_count, 0);
         assert!(!table.has_header);
+        assert!(table.bbox.is_none());
+    }
+
+    #[test]
+    fn test_extracted_table_bbox() {
+        let mut table = ExtractedTable::new();
+        assert!(table.bbox.is_none());
+
+        table.bbox = Some(Rect::new(10.0, 20.0, 100.0, 50.0));
+        assert!(table.bbox.is_some());
+        let bbox = table.bbox.unwrap();
+        assert_eq!(bbox.x, 10.0);
+        assert_eq!(bbox.y, 20.0);
+        assert_eq!(bbox.width, 100.0);
+        assert_eq!(bbox.height, 50.0);
     }
 
     #[test]
@@ -384,5 +500,274 @@ mod tests {
 
         table.has_header = true;
         assert!(table.has_header);
+    }
+
+    // ============================================================================
+    // find_table_elements() tests
+    // ============================================================================
+
+    /// Helper: create a minimal Table StructElem with MarkedContentRefs on a given page
+    fn make_table_elem(page: u32, mcids: &[u32]) -> StructElem {
+        let mut table = StructElem::new(StructType::Table);
+        let mut tr = StructElem::new(StructType::TR);
+        for &mcid in mcids {
+            let mut td = StructElem::new(StructType::TD);
+            td.add_child(StructChild::MarkedContentRef { mcid, page });
+            tr.add_child(StructChild::StructElem(Box::new(td)));
+        }
+        table.add_child(StructChild::StructElem(Box::new(tr)));
+        table
+    }
+
+    #[test]
+    fn test_find_table_elements_finds_table_on_matching_page() {
+        let mut tree = StructTreeRoot::new();
+        tree.add_root_element(make_table_elem(0, &[1, 2]));
+
+        let tables = find_table_elements(&tree, 0);
+        assert_eq!(tables.len(), 1);
+        assert_eq!(tables[0].struct_type, StructType::Table);
+    }
+
+    #[test]
+    fn test_find_table_elements_skips_table_on_different_page() {
+        let mut tree = StructTreeRoot::new();
+        tree.add_root_element(make_table_elem(1, &[1, 2]));
+
+        let tables = find_table_elements(&tree, 0);
+        assert!(tables.is_empty());
+    }
+
+    #[test]
+    fn test_find_table_elements_empty_tree() {
+        let tree = StructTreeRoot::new();
+        let tables = find_table_elements(&tree, 0);
+        assert!(tables.is_empty());
+    }
+
+    #[test]
+    fn test_find_table_elements_multiple_tables() {
+        let mut tree = StructTreeRoot::new();
+        tree.add_root_element(make_table_elem(0, &[1, 2]));
+        tree.add_root_element(make_table_elem(0, &[3, 4]));
+
+        let tables = find_table_elements(&tree, 0);
+        assert_eq!(tables.len(), 2);
+    }
+
+    #[test]
+    fn test_find_table_elements_nested_in_section() {
+        let mut tree = StructTreeRoot::new();
+        let mut sect = StructElem::new(StructType::Sect);
+        sect.add_child(StructChild::StructElem(Box::new(make_table_elem(0, &[1]))));
+        tree.add_root_element(sect);
+
+        let tables = find_table_elements(&tree, 0);
+        assert_eq!(tables.len(), 1);
+    }
+
+    #[test]
+    fn test_find_table_elements_table_with_page_attribute() {
+        let mut tree = StructTreeRoot::new();
+        let mut table = StructElem::new(StructType::Table);
+        table.page = Some(2);
+        // No MarkedContentRef children, but page attribute matches
+        tree.add_root_element(table);
+
+        let tables = find_table_elements(&tree, 2);
+        assert_eq!(tables.len(), 1);
+    }
+
+    #[test]
+    fn test_find_table_elements_mixed_pages() {
+        let mut tree = StructTreeRoot::new();
+        tree.add_root_element(make_table_elem(0, &[1]));
+        tree.add_root_element(make_table_elem(1, &[2]));
+        tree.add_root_element(make_table_elem(0, &[3]));
+
+        let page0_tables = find_table_elements(&tree, 0);
+        assert_eq!(page0_tables.len(), 2);
+
+        let page1_tables = find_table_elements(&tree, 1);
+        assert_eq!(page1_tables.len(), 1);
+    }
+
+    // ============================================================================
+    // element_has_page_content() tests
+    // ============================================================================
+
+    #[test]
+    fn test_element_has_page_content_via_mcid() {
+        let mut elem = StructElem::new(StructType::P);
+        elem.add_child(StructChild::MarkedContentRef { mcid: 1, page: 3 });
+
+        assert!(element_has_page_content(&elem, 3));
+        assert!(!element_has_page_content(&elem, 0));
+    }
+
+    #[test]
+    fn test_element_has_page_content_via_page_attribute() {
+        let mut elem = StructElem::new(StructType::P);
+        elem.page = Some(5);
+
+        assert!(element_has_page_content(&elem, 5));
+        assert!(!element_has_page_content(&elem, 0));
+    }
+
+    #[test]
+    fn test_element_has_page_content_recursive() {
+        let mut parent = StructElem::new(StructType::Sect);
+        let mut child = StructElem::new(StructType::P);
+        child.add_child(StructChild::MarkedContentRef { mcid: 1, page: 2 });
+        parent.add_child(StructChild::StructElem(Box::new(child)));
+
+        assert!(element_has_page_content(&parent, 2));
+        assert!(!element_has_page_content(&parent, 0));
+    }
+
+    #[test]
+    fn test_element_has_page_content_empty() {
+        let elem = StructElem::new(StructType::P);
+        assert!(!element_has_page_content(&elem, 0));
+    }
+
+    #[test]
+    fn test_element_has_page_content_object_ref_ignored() {
+        let mut elem = StructElem::new(StructType::P);
+        elem.add_child(StructChild::ObjectRef(1, 0));
+        assert!(!element_has_page_content(&elem, 0));
+    }
+
+    // ============================================================================
+    // extract_table_from_spans() tests
+    // ============================================================================
+
+    fn make_text_span(text: &str, mcid: Option<u32>) -> crate::layout::TextSpan {
+        use crate::layout::text_block::{Color, FontWeight};
+
+        crate::layout::TextSpan {
+            text: text.to_string(),
+            bbox: Rect::new(0.0, 0.0, 50.0, 12.0),
+            font_name: "Test".to_string(),
+            font_size: 12.0,
+            font_weight: FontWeight::Normal,
+            is_italic: false,
+            color: Color::black(),
+            mcid,
+            sequence: 0,
+            split_boundary_before: false,
+            offset_semantic: false,
+            char_spacing: 0.0,
+            word_spacing: 0.0,
+            horizontal_scaling: 1.0,
+            primary_detected: false,
+        }
+    }
+
+    #[test]
+    fn test_extract_table_from_spans_basic() {
+        // Build a simple Table > TR > [TD, TD] structure
+        let mut table_elem = StructElem::new(StructType::Table);
+        let mut tr = StructElem::new(StructType::TR);
+        let mut td1 = StructElem::new(StructType::TD);
+        td1.add_child(StructChild::MarkedContentRef { mcid: 10, page: 0 });
+        let mut td2 = StructElem::new(StructType::TD);
+        td2.add_child(StructChild::MarkedContentRef { mcid: 11, page: 0 });
+        tr.add_child(StructChild::StructElem(Box::new(td1)));
+        tr.add_child(StructChild::StructElem(Box::new(td2)));
+        table_elem.add_child(StructChild::StructElem(Box::new(tr)));
+
+        let spans = vec![
+            make_text_span("Hello", Some(10)),
+            make_text_span("World", Some(11)),
+            make_text_span("Unrelated", Some(99)),
+        ];
+
+        let result = extract_table_from_spans(&table_elem, &spans).unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0].cells.len(), 2);
+        assert_eq!(result.rows[0].cells[0].text, "Hello");
+        assert_eq!(result.rows[0].cells[1].text, "World");
+    }
+
+    #[test]
+    fn test_extract_table_from_spans_no_matching_mcids() {
+        let mut table_elem = StructElem::new(StructType::Table);
+        let mut tr = StructElem::new(StructType::TR);
+        let mut td = StructElem::new(StructType::TD);
+        td.add_child(StructChild::MarkedContentRef { mcid: 10, page: 0 });
+        tr.add_child(StructChild::StructElem(Box::new(td)));
+        table_elem.add_child(StructChild::StructElem(Box::new(tr)));
+
+        // Spans have different MCIDs
+        let spans = vec![make_text_span("Other", Some(99))];
+
+        let result = extract_table_from_spans(&table_elem, &spans).unwrap();
+        assert_eq!(result.rows.len(), 1);
+        assert_eq!(result.rows[0].cells[0].text, ""); // No matching content
+    }
+
+    #[test]
+    fn test_extract_table_from_spans_filters_no_mcid_spans() {
+        let mut table_elem = StructElem::new(StructType::Table);
+        let mut tr = StructElem::new(StructType::TR);
+        let mut td = StructElem::new(StructType::TD);
+        td.add_child(StructChild::MarkedContentRef { mcid: 5, page: 0 });
+        tr.add_child(StructChild::StructElem(Box::new(td)));
+        table_elem.add_child(StructChild::StructElem(Box::new(tr)));
+
+        // Mix of spans with and without MCIDs
+        let spans = vec![
+            make_text_span("No MCID", None),
+            make_text_span("Has MCID", Some(5)),
+        ];
+
+        let result = extract_table_from_spans(&table_elem, &spans).unwrap();
+        assert_eq!(result.rows[0].cells[0].text, "Has MCID");
+    }
+
+    #[test]
+    fn test_extract_table_from_spans_with_thead() {
+        let mut table_elem = StructElem::new(StructType::Table);
+
+        // THead > TR > TH
+        let mut thead = StructElem::new(StructType::THead);
+        let mut hdr_tr = StructElem::new(StructType::TR);
+        let mut th = StructElem::new(StructType::TH);
+        th.add_child(StructChild::MarkedContentRef { mcid: 1, page: 0 });
+        hdr_tr.add_child(StructChild::StructElem(Box::new(th)));
+        thead.add_child(StructChild::StructElem(Box::new(hdr_tr)));
+        table_elem.add_child(StructChild::StructElem(Box::new(thead)));
+
+        // TBody > TR > TD
+        let mut tbody = StructElem::new(StructType::TBody);
+        let mut body_tr = StructElem::new(StructType::TR);
+        let mut td = StructElem::new(StructType::TD);
+        td.add_child(StructChild::MarkedContentRef { mcid: 2, page: 0 });
+        body_tr.add_child(StructChild::StructElem(Box::new(td)));
+        tbody.add_child(StructChild::StructElem(Box::new(body_tr)));
+        table_elem.add_child(StructChild::StructElem(Box::new(tbody)));
+
+        let spans = vec![
+            make_text_span("Header", Some(1)),
+            make_text_span("Data", Some(2)),
+        ];
+
+        let result = extract_table_from_spans(&table_elem, &spans).unwrap();
+        assert!(result.has_header);
+        assert_eq!(result.rows.len(), 2);
+        assert!(result.rows[0].is_header);
+        assert!(!result.rows[1].is_header);
+        assert_eq!(result.rows[0].cells[0].text, "Header");
+        assert_eq!(result.rows[1].cells[0].text, "Data");
+    }
+
+    #[test]
+    fn test_extract_table_from_spans_empty_table() {
+        let table_elem = StructElem::new(StructType::Table);
+        let spans: Vec<crate::layout::TextSpan> = vec![];
+
+        let result = extract_table_from_spans(&table_elem, &spans).unwrap();
+        assert!(result.is_empty());
     }
 }

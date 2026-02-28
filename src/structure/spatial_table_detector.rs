@@ -575,10 +575,43 @@ fn grid_to_extracted_table(grid: &GridStructure, spans: &[TextSpan]) -> Extracte
 
     let has_header = header_row_idx.is_some();
 
+    // Compute bounding box from all spans in the grid
+    let all_span_indices: Vec<usize> = grid
+        .cells
+        .iter()
+        .flat_map(|row| row.iter().flat_map(|cell| cell.iter().copied()))
+        .collect();
+
+    let bbox = if !all_span_indices.is_empty() {
+        let mut min_x = f32::INFINITY;
+        let mut min_y = f32::INFINITY;
+        let mut max_x = f32::NEG_INFINITY;
+        let mut max_y = f32::NEG_INFINITY;
+
+        for &idx in &all_span_indices {
+            if let Some(s) = spans.get(idx) {
+                min_x = min_x.min(s.bbox.x);
+                min_y = min_y.min(s.bbox.y);
+                max_x = max_x.max(s.bbox.x + s.bbox.width);
+                max_y = max_y.max(s.bbox.y + s.bbox.height);
+            }
+        }
+
+        Some(crate::geometry::Rect::new(
+            min_x,
+            min_y,
+            max_x - min_x,
+            max_y - min_y,
+        ))
+    } else {
+        None
+    };
+
     ExtractedTable {
         rows: table_rows,
         has_header,
         col_count: num_cols,
+        bbox,
     }
 }
 
@@ -1026,5 +1059,50 @@ mod tests {
         assert_eq!(table.rows[0].cells[1].text, "World");
         assert_eq!(table.rows[1].cells[0].text, "Foo");
         assert_eq!(table.rows[1].cells[1].text, "Bar");
+    }
+
+    #[test]
+    fn test_spatial_detection_populates_bbox() {
+        let spans = vec![
+            create_test_span("A", 10.0, 100.0, 30.0, 12.0),
+            create_test_span("B", 60.0, 100.0, 25.0, 12.0),
+            create_test_span("C", 10.0, 80.0, 30.0, 12.0),
+            create_test_span("D", 60.0, 80.0, 25.0, 12.0),
+        ];
+
+        let config = TableDetectionConfig::default();
+        let tables = detect_tables_from_spans(&spans, &config);
+
+        assert_eq!(tables.len(), 1);
+        let bbox = tables[0].bbox.expect("bbox should be populated");
+
+        // min_x = 10.0, min_y = 80.0, max_x = 60+25 = 85.0, max_y = 100+12 = 112.0
+        assert!((bbox.x - 10.0).abs() < 0.01);
+        assert!((bbox.y - 80.0).abs() < 0.01);
+        assert!((bbox.width - 75.0).abs() < 0.01); // 85.0 - 10.0
+        assert!((bbox.height - 32.0).abs() < 0.01); // 112.0 - 80.0
+    }
+
+    #[test]
+    fn test_spatial_detection_bbox_single_row_pair() {
+        // A minimal 2-col 2-row table but with different span sizes
+        let spans = vec![
+            create_test_span("X", 5.0, 200.0, 40.0, 10.0),
+            create_test_span("Y", 100.0, 200.0, 50.0, 10.0),
+            create_test_span("Z", 5.0, 180.0, 40.0, 10.0),
+            create_test_span("W", 100.0, 180.0, 50.0, 10.0),
+        ];
+
+        let config = TableDetectionConfig::default();
+        let tables = detect_tables_from_spans(&spans, &config);
+
+        assert_eq!(tables.len(), 1);
+        let bbox = tables[0].bbox.expect("bbox should be set");
+
+        // min_x=5, min_y=180, max_x=100+50=150, max_y=200+10=210
+        assert!((bbox.x - 5.0).abs() < 0.01);
+        assert!((bbox.y - 180.0).abs() < 0.01);
+        assert!((bbox.width - 145.0).abs() < 0.01); // 150 - 5
+        assert!((bbox.height - 30.0).abs() < 0.01); // 210 - 180
     }
 }

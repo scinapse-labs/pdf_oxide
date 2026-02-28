@@ -32,6 +32,7 @@ pub use toc_detector::{TocDetector, TocEntry};
 
 use crate::error::Result;
 use crate::pipeline::{OrderedTextSpan, TextPipelineConfig};
+use crate::structure::table_extractor::ExtractedTable;
 
 /// Trait for converting ordered text spans to output formats.
 ///
@@ -53,6 +54,23 @@ pub trait OutputConverter: Send + Sync {
     ///
     /// The formatted output string.
     fn convert(&self, spans: &[OrderedTextSpan], config: &TextPipelineConfig) -> Result<String>;
+
+    /// Convert ordered spans to the target format, with pre-detected tables.
+    ///
+    /// Table regions are rendered using the converter's table formatting
+    /// (markdown tables, HTML tables, or tab-delimited text). Spans that
+    /// fall within table bounding boxes are excluded from normal rendering.
+    ///
+    /// Default implementation ignores tables and falls back to `convert()`.
+    fn convert_with_tables(
+        &self,
+        spans: &[OrderedTextSpan],
+        tables: &[ExtractedTable],
+        config: &TextPipelineConfig,
+    ) -> Result<String> {
+        let _ = tables;
+        self.convert(spans, config)
+    }
 
     /// Return the name of this converter for debugging.
     fn name(&self) -> &'static str;

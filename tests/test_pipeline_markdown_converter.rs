@@ -268,13 +268,26 @@ fn test_bold_and_italic() {
 
 #[test]
 fn test_table_detection_simple_2x2() {
-    // Given: Text spans arranged in a 2x2 grid pattern
-    let cell_11 = make_span("A", 10.0, 100.0, 12.0, FontWeight::Normal, false);
-    let cell_12 = make_span("B", 40.0, 100.0, 12.0, FontWeight::Normal, false);
-    let cell_21 = make_span("C", 10.0, 80.0, 12.0, FontWeight::Normal, false);
-    let cell_22 = make_span("D", 40.0, 80.0, 12.0, FontWeight::Normal, false);
+    use pdf_oxide::structure::table_extractor::{ExtractedTable, TableRow, TableCell};
+    use pdf_oxide::geometry::Rect;
 
-    // When: Convert with extract_tables=true
+    // Given: Pre-detected table (tables are now detected upstream, not inline)
+    let mut table = ExtractedTable::new();
+    table.bbox = Some(Rect::new(10.0, 80.0, 80.0, 32.0));
+    table.col_count = 2;
+    table.has_header = true;
+
+    let mut header = TableRow::new(true);
+    header.add_cell(TableCell::new("A".to_string(), true));
+    header.add_cell(TableCell::new("B".to_string(), true));
+    table.add_row(header);
+
+    let mut data = TableRow::new(false);
+    data.add_cell(TableCell::new("C".to_string(), false));
+    data.add_cell(TableCell::new("D".to_string(), false));
+    table.add_row(data);
+
+    // When: Convert with tables via convert_with_tables
     let config = TextPipelineConfig {
         output: OutputConfig {
             extract_tables: true,
@@ -285,11 +298,13 @@ fn test_table_detection_simple_2x2() {
 
     let converter = MarkdownOutputConverter::new();
     let output = converter
-        .convert(&[cell_11, cell_12, cell_21, cell_22], &config)
+        .convert_with_tables(&[], &[table], &config)
         .unwrap();
 
     // Then: Output contains markdown table syntax
     assert!(output.contains("|"), "Output should contain table separators: {}", output);
+    assert!(output.contains("| A |"), "Output should contain cell A: {}", output);
+    assert!(output.contains("---|"), "Output should contain header separator: {}", output);
 }
 
 #[test]

@@ -51,7 +51,10 @@ pub use parser::parse_structure_tree;
 pub use spatial_table_detector::{
     detect_tables_from_spans, DetectedTable, SpatialTableDetector, TableDetectionConfig,
 };
-pub use table_extractor::{extract_table, ExtractedTable, TableCell, TableRow};
+pub use table_extractor::{
+    extract_table, extract_table_from_spans, find_table_elements, ExtractedTable, TableCell,
+    TableRow,
+};
 pub use traversal::{
     extract_reading_order, traverse_structure_tree, traverse_structure_tree_all_pages,
     OrderedContent,

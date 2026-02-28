@@ -9,6 +9,7 @@
 use crate::error::Result;
 use crate::layout::FontWeight;
 use crate::pipeline::{OrderedTextSpan, TextPipelineConfig};
+use crate::structure::table_extractor::ExtractedTable;
 use crate::text::HyphenationHandler;
 
 use super::OutputConverter;
@@ -120,7 +121,20 @@ impl OutputConverter for HtmlOutputConverter {
         if config.output.preserve_layout {
             self.convert_layout_mode(spans, config)
         } else {
-            self.convert_semantic_mode(spans, config)
+            self.convert_semantic_mode(spans, &[], config)
+        }
+    }
+
+    fn convert_with_tables(
+        &self,
+        spans: &[OrderedTextSpan],
+        tables: &[ExtractedTable],
+        config: &TextPipelineConfig,
+    ) -> Result<String> {
+        if config.output.preserve_layout {
+            self.convert_layout_mode(spans, config)
+        } else {
+            self.convert_semantic_mode(spans, tables, config)
         }
     }
 
@@ -188,9 +202,10 @@ impl HtmlOutputConverter {
     fn convert_semantic_mode(
         &self,
         spans: &[OrderedTextSpan],
+        tables: &[ExtractedTable],
         config: &TextPipelineConfig,
     ) -> Result<String> {
-        if spans.is_empty() {
+        if spans.is_empty() && tables.is_empty() {
             return Ok(String::new());
         }
 
@@ -211,16 +226,38 @@ impl HtmlOutputConverter {
             12.0
         };
 
+        // Track which tables have been rendered
+        let mut tables_rendered = vec![false; tables.len()];
+
         let mut result = String::new();
         let mut prev_span: Option<&OrderedTextSpan> = None;
         let mut in_paragraph = false;
         let mut current_content = String::new();
 
-        for span in sorted {
+        for span in &sorted {
+            // Check if span is in a table region
+            if !tables.is_empty() {
+                if let Some(table_idx) = self.span_in_table(span, tables) {
+                    if !tables_rendered[table_idx] {
+                        // Close any open paragraph
+                        if in_paragraph && !current_content.is_empty() {
+                            result.push_str(&format!("<p>{}</p>\n", current_content.trim()));
+                            current_content.clear();
+                            in_paragraph = false;
+                        }
+
+                        // Render the table
+                        result.push_str(&Self::render_table_html(&tables[table_idx]));
+                        tables_rendered[table_idx] = true;
+                        prev_span = None;
+                    }
+                    continue;
+                }
+            }
+
             // Check for paragraph break
             if let Some(prev) = prev_span {
                 if self.is_paragraph_break(span, prev) {
-                    // End current paragraph
                     if in_paragraph && !current_content.is_empty() {
                         result.push_str(&format!("<p>{}</p>\n", current_content.trim()));
                         current_content.clear();
@@ -232,14 +269,12 @@ impl HtmlOutputConverter {
             // Check for heading
             if config.output.detect_headings {
                 if let Some(level) = self.heading_level(span, base_font_size) {
-                    // Close any open paragraph
                     if in_paragraph && !current_content.is_empty() {
                         result.push_str(&format!("<p>{}</p>\n", current_content.trim()));
                         current_content.clear();
                         in_paragraph = false;
                     }
 
-                    // Add heading with style support
                     let text = self.format_span_with_styles(span, span.span.text.trim());
                     result.push_str(&format!("<h{}>{}</h{}>\n", level, text, level));
                     prev_span = Some(span);
@@ -247,16 +282,26 @@ impl HtmlOutputConverter {
                 }
             }
 
-            // Start paragraph if not in one
             if !in_paragraph {
                 in_paragraph = true;
             }
 
-            // Add text with styles
             let formatted = self.format_span_with_styles(span, &span.span.text);
             current_content.push_str(&formatted);
 
             prev_span = Some(span);
+        }
+
+        // Render any tables that weren't matched to spans
+        for (i, table) in tables.iter().enumerate() {
+            if !tables_rendered[i] && !table.is_empty() {
+                if in_paragraph && !current_content.is_empty() {
+                    result.push_str(&format!("<p>{}</p>\n", current_content.trim()));
+                    current_content.clear();
+                    in_paragraph = false;
+                }
+                result.push_str(&Self::render_table_html(table));
+            }
         }
 
         // Close any open paragraph
@@ -271,6 +316,93 @@ impl HtmlOutputConverter {
         }
 
         Ok(result)
+    }
+
+    /// Check if a span's bbox overlaps with any table region.
+    fn span_in_table(&self, span: &OrderedTextSpan, tables: &[ExtractedTable]) -> Option<usize> {
+        let sx = span.span.bbox.x;
+        let sy = span.span.bbox.y;
+
+        for (i, table) in tables.iter().enumerate() {
+            if let Some(ref bbox) = table.bbox {
+                let tolerance = 2.0;
+                if sx >= bbox.x - tolerance
+                    && sx <= bbox.x + bbox.width + tolerance
+                    && sy >= bbox.y - tolerance
+                    && sy <= bbox.y + bbox.height + tolerance
+                {
+                    return Some(i);
+                }
+            }
+        }
+        None
+    }
+
+    /// Render an ExtractedTable as an HTML table string.
+    fn render_table_html(table: &ExtractedTable) -> String {
+        if table.rows.is_empty() {
+            return String::new();
+        }
+
+        let mut html = String::from("<table>\n");
+
+        // Determine header/body sections
+        let has_header = table.has_header || table.rows.first().map_or(false, |r| r.is_header);
+        let header_end = if has_header {
+            table
+                .rows
+                .iter()
+                .position(|r| !r.is_header)
+                .unwrap_or(table.rows.len())
+        } else {
+            0
+        };
+
+        // Render header rows
+        if header_end > 0 {
+            html.push_str("<thead>\n");
+            for row in &table.rows[..header_end] {
+                html.push_str("<tr>");
+                for cell in &row.cells {
+                    let mut attrs = String::new();
+                    if cell.colspan > 1 {
+                        attrs.push_str(&format!(" colspan=\"{}\"", cell.colspan));
+                    }
+                    if cell.rowspan > 1 {
+                        attrs.push_str(&format!(" rowspan=\"{}\"", cell.rowspan));
+                    }
+                    let text = Self::escape_html(cell.text.trim());
+                    html.push_str(&format!("<th{}>{}</th>", attrs, text));
+                }
+                html.push_str("</tr>\n");
+            }
+            html.push_str("</thead>\n");
+        }
+
+        // Render body rows
+        let body_rows = &table.rows[header_end..];
+        if !body_rows.is_empty() {
+            html.push_str("<tbody>\n");
+            for row in body_rows {
+                html.push_str("<tr>");
+                for cell in &row.cells {
+                    let mut attrs = String::new();
+                    if cell.colspan > 1 {
+                        attrs.push_str(&format!(" colspan=\"{}\"", cell.colspan));
+                    }
+                    if cell.rowspan > 1 {
+                        attrs.push_str(&format!(" rowspan=\"{}\"", cell.rowspan));
+                    }
+                    let text = Self::escape_html(cell.text.trim());
+                    html.push_str(&format!("<td{}>{}</td>", attrs, text));
+                }
+                html.push_str("</tr>\n");
+            }
+            html.push_str("</tbody>\n");
+        }
+
+        html.push_str("</table>\n");
+        html
     }
 }
 
@@ -355,5 +487,202 @@ mod tests {
         let result = converter.convert(&spans, &config).unwrap();
         assert!(result.contains("&lt;script&gt;"));
         assert!(!result.contains("<script>"));
+    }
+
+    // ============================================================================
+    // render_table_html() tests
+    // ============================================================================
+
+    use crate::structure::table_extractor::{TableCell, TableRow};
+
+    #[test]
+    fn test_render_table_html_empty() {
+        let table = ExtractedTable::new();
+        let result = HtmlOutputConverter::render_table_html(&table);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_render_table_html_basic() {
+        let mut table = ExtractedTable::new();
+        table.has_header = true;
+
+        let mut header = TableRow::new(true);
+        header.add_cell(TableCell::new("Name".to_string(), true));
+        header.add_cell(TableCell::new("Age".to_string(), true));
+        table.add_row(header);
+
+        let mut data = TableRow::new(false);
+        data.add_cell(TableCell::new("Alice".to_string(), false));
+        data.add_cell(TableCell::new("30".to_string(), false));
+        table.add_row(data);
+
+        let result = HtmlOutputConverter::render_table_html(&table);
+        assert!(result.contains("<table>"));
+        assert!(result.contains("</table>"));
+        assert!(result.contains("<thead>"));
+        assert!(result.contains("</thead>"));
+        assert!(result.contains("<tbody>"));
+        assert!(result.contains("</tbody>"));
+        assert!(result.contains("<th>Name</th>"));
+        assert!(result.contains("<th>Age</th>"));
+        assert!(result.contains("<td>Alice</td>"));
+        assert!(result.contains("<td>30</td>"));
+    }
+
+    #[test]
+    fn test_render_table_html_no_header() {
+        let mut table = ExtractedTable::new();
+
+        let mut row = TableRow::new(false);
+        row.add_cell(TableCell::new("A".to_string(), false));
+        table.add_row(row);
+
+        let result = HtmlOutputConverter::render_table_html(&table);
+        assert!(result.contains("<table>"));
+        assert!(!result.contains("<thead>"), "Should not have thead when no header");
+        assert!(result.contains("<tbody>"));
+        assert!(result.contains("<td>A</td>"));
+    }
+
+    #[test]
+    fn test_render_table_html_colspan() {
+        let mut table = ExtractedTable::new();
+        let mut row = TableRow::new(false);
+        row.add_cell(TableCell::new("Wide".to_string(), false).with_colspan(3));
+        table.add_row(row);
+
+        let result = HtmlOutputConverter::render_table_html(&table);
+        assert!(result.contains("colspan=\"3\""), "Should have colspan attribute: {}", result);
+    }
+
+    #[test]
+    fn test_render_table_html_rowspan() {
+        let mut table = ExtractedTable::new();
+        let mut row = TableRow::new(false);
+        row.add_cell(TableCell::new("Tall".to_string(), false).with_rowspan(2));
+        table.add_row(row);
+
+        let result = HtmlOutputConverter::render_table_html(&table);
+        assert!(result.contains("rowspan=\"2\""), "Should have rowspan attribute: {}", result);
+    }
+
+    #[test]
+    fn test_render_table_html_escapes_content() {
+        let mut table = ExtractedTable::new();
+        let mut row = TableRow::new(false);
+        row.add_cell(TableCell::new("<b>bold</b>".to_string(), false));
+        row.add_cell(TableCell::new("A & B".to_string(), false));
+        table.add_row(row);
+
+        let result = HtmlOutputConverter::render_table_html(&table);
+        assert!(result.contains("&lt;b&gt;bold&lt;/b&gt;"), "HTML should be escaped: {}", result);
+        assert!(result.contains("A &amp; B"), "Ampersand should be escaped: {}", result);
+        assert!(!result.contains("<b>bold</b>"), "Raw HTML should not appear");
+    }
+
+    #[test]
+    fn test_render_table_html_all_header_rows() {
+        let mut table = ExtractedTable::new();
+        table.has_header = true;
+
+        let mut h1 = TableRow::new(true);
+        h1.add_cell(TableCell::new("H1".to_string(), true));
+        table.add_row(h1);
+
+        let mut h2 = TableRow::new(true);
+        h2.add_cell(TableCell::new("H2".to_string(), true));
+        table.add_row(h2);
+
+        let result = HtmlOutputConverter::render_table_html(&table);
+        assert!(result.contains("<thead>"));
+        assert!(result.contains("<th>H1</th>"));
+        assert!(result.contains("<th>H2</th>"));
+        // No tbody when all rows are headers
+        assert!(!result.contains("<tbody>"));
+    }
+
+    // ============================================================================
+    // convert_with_tables() tests
+    // ============================================================================
+
+    #[test]
+    fn test_convert_with_tables_renders_html_table() {
+        let converter = HtmlOutputConverter::new();
+        let config = TextPipelineConfig::default();
+
+        let mut table = ExtractedTable::new();
+        table.bbox = Some(Rect::new(10.0, 50.0, 200.0, 100.0));
+        table.has_header = true;
+
+        let mut header = TableRow::new(true);
+        header.add_cell(TableCell::new("X".to_string(), true));
+        table.add_row(header);
+
+        let mut data = TableRow::new(false);
+        data.add_cell(TableCell::new("Y".to_string(), false));
+        table.add_row(data);
+
+        let result = converter
+            .convert_with_tables(&[], &[table], &config)
+            .unwrap();
+
+        assert!(result.contains("<table>"), "Should contain HTML table: {}", result);
+        assert!(result.contains("<th>X</th>"));
+        assert!(result.contains("<td>Y</td>"));
+    }
+
+    #[test]
+    fn test_convert_with_tables_mixed_content() {
+        let converter = HtmlOutputConverter::new();
+        let config = TextPipelineConfig::default();
+
+        let mut span_before = make_span("Intro", 10.0, 200.0, 12.0, FontWeight::Normal);
+        span_before.reading_order = 0;
+
+        let mut span_in_table = make_span("Inside", 50.0, 70.0, 12.0, FontWeight::Normal);
+        span_in_table.reading_order = 1;
+
+        let mut table = ExtractedTable::new();
+        table.bbox = Some(Rect::new(10.0, 50.0, 200.0, 100.0));
+        let mut row = TableRow::new(false);
+        row.add_cell(TableCell::new("Cell".to_string(), false));
+        table.add_row(row);
+
+        let result = converter
+            .convert_with_tables(&[span_before, span_in_table], &[table], &config)
+            .unwrap();
+
+        assert!(result.contains("<p>Intro</p>"), "Should contain paragraph: {}", result);
+        assert!(result.contains("<table>"), "Should contain table: {}", result);
+        assert!(!result.contains("Inside"), "Should exclude span in table region");
+    }
+
+    #[test]
+    fn test_convert_with_tables_no_tables_same_as_convert() {
+        let converter = HtmlOutputConverter::new();
+        let config = TextPipelineConfig::default();
+        let spans = vec![make_span("Hello", 0.0, 100.0, 12.0, FontWeight::Normal)];
+
+        let result_convert = converter.convert(&spans, &config).unwrap();
+        let result_with_tables = converter
+            .convert_with_tables(&spans, &[], &config)
+            .unwrap();
+
+        assert_eq!(result_convert, result_with_tables);
+    }
+
+    #[test]
+    fn test_span_in_table_html() {
+        let converter = HtmlOutputConverter::new();
+
+        let mut table = ExtractedTable::new();
+        table.bbox = Some(Rect::new(10.0, 50.0, 200.0, 100.0));
+
+        let inside = make_span("inside", 50.0, 70.0, 12.0, FontWeight::Normal);
+        let outside = make_span("outside", 500.0, 500.0, 12.0, FontWeight::Normal);
+
+        assert_eq!(converter.span_in_table(&inside, &[table.clone()]), Some(0));
+        assert_eq!(converter.span_in_table(&outside, &[table]), None);
     }
 }
