@@ -17,6 +17,10 @@ All notable changes to PDFOxide are documented here.
 
 ### Bug Fixes
 
+- **NaN float comparison panics** — fixed 27 sort/comparison sites across 25 files that used `partial_cmp().unwrap_or(Equal)` on float values. NaN coordinates from malformed PDFs violated total ordering, causing Rust's sort to panic. All comparisons now use `safe_float_cmp()` with proper NaN handling. Verified on 220 PDFs across 6 test datasets (42 previously panicking PDFs now pass).
+
+- **Compressed xref validation** — `validate_object_at_offset()` incorrectly treated compressed (type 2) xref entries' object stream numbers as byte offsets, triggering unnecessary full-file xref reconstruction (35+ seconds on large PDFs). Compressed entries are now recognized as valid without byte-level seeking.
+
 - Replaced broken inline table heuristic (required all rows to have same column count) with proper two-strategy detection: structure tree first, spatial fallback.
 
 ## [0.3.10] - 2026-02-26
