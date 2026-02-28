@@ -75,6 +75,10 @@ sha1 = { version = "0.10", optional = true }          # SHA-1 for legacy signatu
 # Parallel extraction
 rayon = { version = "1.10", optional = true }
 
+# CLI (optional)
+clap = { version = "4", features = ["derive"], optional = true }
+is-terminal = { version = "0.4", optional = true }
+
 # Math and algorithms
 ndarray = { version = "0.17", optional = true, features = ["std"] }
 linfa = { version = "0.7", optional = true }
@@ -170,6 +174,9 @@ office = ["dep:calamine", "dep:zip"]
 # Parallel page extraction via rayon
 parallel = ["dep:rayon"]
 
+# CLI binary
+cli = ["dep:clap", "dep:is-terminal"]
+
 [profile.release]
 opt-level = 3
 lto = true
@@ -223,6 +230,11 @@ name = "full_pipeline_benchmarks"
 harness = false
 
 # Cargo auto-discovers binaries in src/bin/
+
+[[bin]]
+name = "pdf-oxide"
+path = "src/bin/pdf_oxide_cli.rs"
+required-features = ["cli"]
 
 [package.metadata.docs.rs]
 # Document with safe features only (tesseract-rs fails on docs.rs sandbox)

@@ -1,0 +1,127 @@
+//! CLI interface for pdf-oxide.
+//!
+//! Provides both subcommand execution and interactive REPL modes.
+
+mod args;
+mod banner;
+mod colors;
+pub mod commands;
+mod pages;
+mod repl;
+
+use args::{Cli, Command};
+use clap::Parser;
+use std::path::Path;
+
+/// Run the CLI. Called from the `pdf-oxide` binary entry point.
+pub fn run() -> crate::Result<()> {
+    let args = std::env::args().collect::<Vec<_>>();
+
+    if args.len() <= 1 {
+        if is_terminal::is_terminal(std::io::stdin()) {
+            return repl::enter(false, None, false, false);
+        } else {
+            return run_piped_stdin();
+        }
+    }
+
+    let cli = Cli::parse();
+
+    match cli.command {
+        Some(cmd) => dispatch(
+            cmd,
+            cli.output.as_deref(),
+            cli.pages.as_deref(),
+            cli.password.as_deref(),
+            cli.verbose,
+            cli.quiet,
+            cli.json,
+        ),
+        None => repl::enter(cli.no_banner, cli.password, cli.json, cli.verbose),
+    }
+}
+
+fn dispatch(
+    cmd: Command,
+    output: Option<&Path>,
+    pages: Option<&str>,
+    password: Option<&str>,
+    verbose: bool,
+    quiet: bool,
+    json: bool,
+) -> crate::Result<()> {
+    let start = if verbose {
+        Some(std::time::Instant::now())
+    } else {
+        None
+    };
+
+    let result = match cmd {
+        Command::Text { ref file } => {
+            commands::text::run(file, pages, output, password, json)
+        }
+        Command::Markdown { ref file } => {
+            commands::markdown::run(file, pages, output, password, json)
+        }
+        Command::Html { ref file } => {
+            commands::html::run(file, pages, output, password, json)
+        }
+        Command::Info { ref file } => {
+            commands::info::run(file, password, json)
+        }
+        Command::Merge { ref files } => {
+            commands::merge::run(files, output)
+        }
+        Command::Split { ref file } => {
+            commands::split::run(file, pages, output, password)
+        }
+        Command::Create { ref file, ref from } => {
+            commands::create::run(file, from, output)
+        }
+        Command::Compress { ref file } => {
+            commands::compress::run(file, output, password)
+        }
+        Command::Encrypt { .. } => {
+            commands::encrypt::run()
+        }
+        Command::Decrypt { ref file, ref password } => {
+            commands::decrypt::run(file, password, output)
+        }
+        Command::Search { ref file, ref pattern, ignore_case } => {
+            commands::search::run(file, pattern, ignore_case, pages, password, json)
+        }
+        Command::Images { ref file } => {
+            commands::images::run(file, pages, output, password, json)
+        }
+    };
+
+    if let Some(start) = start {
+        let elapsed = start.elapsed();
+        if !quiet {
+            eprintln!("Completed in {:.1}ms", elapsed.as_secs_f64() * 1000.0);
+        }
+    }
+
+    result
+}
+
+fn run_piped_stdin() -> crate::Result<()> {
+    use std::io::BufRead;
+    let stdin = std::io::stdin();
+    let reader = stdin.lock();
+
+    if let Some(Ok(line)) = reader.lines().next() {
+        let path = line.trim().to_string();
+        if path.is_empty() {
+            return Err(crate::Error::InvalidOperation(
+                "No file path provided on stdin".to_string(),
+            ));
+        }
+        let file = std::path::PathBuf::from(&path);
+        commands::text::run(&file, None, None, None, false)
+    } else {
+        Err(crate::Error::InvalidOperation(
+            "No input received on stdin".to_string(),
+        ))
+    }
+}

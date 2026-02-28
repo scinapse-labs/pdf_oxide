@@ -237,6 +237,12 @@ pub mod hybrid;
 #[cfg_attr(docsrs, doc(cfg(feature = "ocr")))]
 pub mod ocr;
 
+// CLI (optional)
+#[cfg(feature = "cli")]
+#[cfg_attr(docsrs, doc(cfg(feature = "cli")))]
+#[allow(missing_docs)]
+pub mod cli;
+
 // Python bindings (optional)
 #[cfg(feature = "python")]
 mod python;

@@ -1,0 +1,25 @@
+use crate::editor::{DocumentEditor, EditableDocument, SaveOptions};
+use std::path::Path;
+
+pub fn run(
+    file: &Path,
+    _password: &str,
+    output: Option<&Path>,
+) -> crate::Result<()> {
+    let mut editor = DocumentEditor::open(file)?;
+
+    let out_path = output.map(|p| p.to_path_buf()).unwrap_or_else(|| {
+        let stem = file.file_stem().and_then(|s| s.to_str()).unwrap_or("output");
+        std::path::PathBuf::from(format!("{stem}_decrypted.pdf"))
+    });
+
+    editor.save_with_options(&out_path, SaveOptions {
+        compress: true,
+        garbage_collect: true,
+        ..Default::default()
+    })?;
+
+    eprintln!("Decrypted {} -> {}", file.display(), out_path.display());
+
+    Ok(())
+}
