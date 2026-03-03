@@ -32,8 +32,8 @@ Reported by **@cole-dda** — repeated calls to `extract_texts()` and `extract_s
 
 Thank you to **@ankursri494** (Ankur Srivastava) for the excellent proposal to bridge the gap between `PdfPlumber`'s flexibility and PDFOxide's performance (#185). Your detailed breakdown of word-level and table extraction requirements was the roadmap for this release!
 
-Thank you to **@cole-dda** for identifying the critical caching bug (#193) and reporting the character extraction quality issue with excellent reproduction cases (#186). Your contributions have made PDFOxide significantly more robust for professional production pipelines.
-## [0.3.14] - 2026-03-02
+Thank you to **@cole-dda** for identifying the critical caching bug (#193). The detailed reproduction case was essential for pinpointing the interaction between the low-level character API and the document-level XObject caches.
+## [0.3.13] - 2026-03-02
 > Character Extraction Quality, Multi-byte Encoding (Issue #186)
 
 ### Bug Fixes — Character Extraction (#186)
@@ -48,15 +48,14 @@ Reported by **@cole-dda** — garbled output when using `extract_chars()` on PDF
 
 Thank you to **@cole-dda** for identifying and reporting the character extraction quality issue with an excellent reproduction case (#186). Your report directly led to identifying the divergence between our high-level and low-level extraction paths, making `extract_chars()` significantly more robust for CJK and other multi-byte documents. We really appreciate your contribution to making PDF Oxide better!
 
-## [0.3.14] - 2026-03-01
+## [0.3.12] - 2026-03-01
 > Text Extraction Quality, Determinism, Performance, Markdown Conversion
 
 ### Bug Fixes — Text Extraction (#181)
 
 Reported by **@Goldziher** — systematic evaluation across 10 PDFs covering word merging, encoding failures, and RTL text.
 
-- **CID font width calculation** — fixed text-to-user space conversion for CID fonts.
- Glyph widths were not correctly scaled, causing word boundary detection to merge adjacent words (`destinationmachine` → `destination machine`, `helporganizeas` → `help organize as`).
+- **CID font width calculation** — fixed text-to-user space conversion for CID fonts. Glyph widths were not correctly scaled, causing word boundary detection to merge adjacent words (`destinationmachine` → `destination machine`, `helporganizeas` → `help organize as`).
 
 - **Font-change word boundary detection** — when PDF font changes mid-line (e.g., regular→italic for product names in LaTeX), we now detect this as a word boundary even without explicit spacing. Fixes `introducesDocling` → `introduces Docling`, `PyTorch[2]` → `PyTorch [2]`.
 
@@ -87,8 +86,7 @@ Reported by **@Goldziher** — systematic evaluation across 10 PDFs covering wor
 
 Reported by **@yunho-c** — broken markdown output on the Analog Devices AD5940/AD5941 datasheet (two-column layout with bullet lists).
 
-- **Bullet character detection and list formatting** — PDF bullet characters (`►`, `•`, `▪`, `▸`, `‣`, `◦`, `●`, `■`, `◆`, `○`, `□`) were rendered as inline text with no line breaks.
- Now detected and converted to markdown `- ` list items with proper line separation. Page 0 of ad5940-5941.pdf: 0 → 57 properly formatted list items.
+- **Bullet character detection and list formatting** — PDF bullet characters (`►`, `•`, `▪`, `▸`, `‣`, `◦`, `●`, `■`, `◆`, `○`, `□`) were rendered as inline text with no line breaks. Now detected and converted to markdown `- ` list items with proper line separation. Page 0 of ad5940-5941.pdf: 0 → 57 properly formatted list items.
 
 - **Heading over-detection** — base font size calculation included small bullet/subscript spans (8.8pt `►` characters), pulling the median down to ~8.8pt. This caused 11pt body text to exceed the 1.15× heading ratio threshold and get promoted to `### H3`. Fixed by excluding spans < 9pt from the median calculation. Page 0: 35 → 0 spurious headings.
 
@@ -111,7 +109,7 @@ Reported by **@yunho-c** — broken markdown output on the Analog Devices AD5940
 ### Tests
 
 - 8 new unit tests for bullet detection (`is_bullet_span`, `starts_with_bullet`, `strip_bullet`), list item rendering, and heading over-detection prevention.
-- Benchmarked on 198 PDFs: 0 panics, 0 timeouts, 0 errors on both v0.3.11 and v0.3.14.
+- Benchmarked on 198 PDFs: 0 panics, 0 timeouts, 0 errors on both v0.3.11 and v0.3.12.
 
 ### Community Contributors
 
