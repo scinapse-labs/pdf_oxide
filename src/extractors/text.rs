@@ -2539,6 +2539,7 @@ impl TextExtractor {
         // Enable character extraction mode
         self.extract_spans = false;
         self.chars.clear();
+        self.spans.clear(); // Ensure spans are clear so they don't poison xobject_spans_cache
 
         // Parse content stream into operators
         let operators = parse_content_stream_text_only(content_stream)?;
@@ -4417,11 +4418,13 @@ impl TextExtractor {
 
         // Span result cache: reuse extracted spans from self-contained Form XObjects.
         // Only works for XObjects with own /Resources (font context is self-contained).
-        if let Some(cached_spans) = doc.xobject_spans_cache.get(&xobject_ref) {
-            if let Some(spans) = cached_spans {
-                self.spans.extend(spans.iter().cloned());
+        if self.extract_spans {
+            if let Some(cached_spans) = doc.xobject_spans_cache.get(&xobject_ref) {
+                if let Some(spans) = cached_spans {
+                    self.spans.extend(spans.iter().cloned());
+                }
+                return Ok(());
             }
-            return Ok(());
         }
 
         // Load the XObject (now known to be Form or unknown — worth the full load)
@@ -4577,7 +4580,7 @@ impl TextExtractor {
 
                 // Cache span results for self-contained Form XObjects.
                 // Only safe when XObject has own /Resources (font context is independent of page).
-                if has_own_resources {
+                if has_own_resources && self.extract_spans {
                     let new_spans = if self.spans.len() > spans_before {
                         Some(self.spans[spans_before..].to_vec())
                     } else {

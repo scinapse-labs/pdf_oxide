@@ -2,6 +2,7 @@
 
 All notable changes to PDFOxide are documented here.
 
+<<<<<<< HEAD
 ## [0.3.14] - 2026-03-XX
 > Consolidated Text Logic, Performance, Reliability, Competitor Parity
 
@@ -17,6 +18,22 @@ All notable changes to PDFOxide are documented here.
 
 - **Consolidated text decoding and positioning logic** (#187) — unified the high-level `extract_text_spans()` and low-level `extract_chars()` paths into a single shared engine to prevent logic drift and ensure consistent character handling.
 - **Fixed render_page for in-memory PDFs** — ensured that PDFs created from bytes or strings can be rendered by automatically initializing a temporary editor if needed.
+||||||| parent of b0690fa (release: v0.3.14 — Fix inconsistent text extraction (Issue #193))
+=======
+## [0.3.14] - 2026-03-02
+> Inconsistent Text Extraction, Cache Poisoning (Issue #193)
+
+### Bug Fixes — Text Extraction (#193)
+
+Reported by **@cole-dda** — repeated calls to `extract_texts()` and `extract_spans()` return inconsistent results (empty lists on second/third calls).
+
+- **Fixed XObject span cache poisoning** — resolved an issue where `extract_chars()` (low-level API) would incorrectly populate the high-level `xobject_spans_cache` with empty results. Because `extract_chars()` does not collect spans, it was "poisoning" the cache for subsequent `extract_spans()` calls, causing them to return empty data for any content inside Form XObjects.
+- **Improved extraction mode isolation** — ensured that the text extractor explicitly separates character and span extraction paths. The span result cache is now only accessed and updated when in span extraction mode, and internal span buffers are cleared when entering character mode.
+
+### Community Contributors
+
+Thank you to **@cole-dda** for identifying this critical caching bug (#193). The detailed reproduction case was essential for pinpointing the interaction between the low-level character API and the document-level XObject caches.
+>>>>>>> b0690fa (release: v0.3.14 — Fix inconsistent text extraction (Issue #193))
 
 ## [0.3.13] - 2026-03-02
 > Character Extraction Quality, Multi-byte Encoding (Issue #186)
