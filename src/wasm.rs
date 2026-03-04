@@ -1113,10 +1113,67 @@ impl WasmPdfPageRegion {
             ]),
         )
     }
+
+    /// Extract text using OCR from this region.
+    #[wasm_bindgen(js_name = "extractTextOcr")]
+    pub fn extract_text_ocr(&mut self, _engine: Option<WasmOcrEngine>) -> Result<String, JsValue> {
+        Err(JsValue::from_str(
+            "OCR is not yet supported in WebAssembly. Please use the Python or Rust APIs for OCR.",
+        ))
+    }
+}
+
+/// OCR configuration for WebAssembly.
+#[wasm_bindgen]
+#[derive(Clone, Default)]
+pub struct WasmOcrConfig {}
+
+#[wasm_bindgen]
+impl WasmOcrConfig {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// OCR engine for WebAssembly.
+#[wasm_bindgen]
+pub struct WasmOcrEngine {}
+
+#[wasm_bindgen]
+impl WasmOcrEngine {
+    #[wasm_bindgen(constructor)]
+    pub fn new(
+        _det_model_path: &str,
+        _rec_model_path: &str,
+        _dict_path: &str,
+        _config: Option<WasmOcrConfig>,
+    ) -> Result<WasmOcrEngine, JsValue> {
+        Err(JsValue::from_str(
+            "OCR is not yet supported in WebAssembly. Please use the Python or Rust APIs for OCR.",
+        ))
+    }
 }
 
 #[wasm_bindgen]
 impl WasmPdfDocument {
+    // =================================Group 6b: OCR========================================
+
+    /// Extract text using OCR (optical character recognition).
+    ///
+    /// NOTE: OCR is not yet supported in the WebAssembly build due to missing
+    /// ONNX Runtime support for the web backend in the current implementation.
+    #[wasm_bindgen(js_name = "extractTextOcr")]
+    pub fn extract_text_ocr(
+        &mut self,
+        _page_index: usize,
+        _engine: Option<WasmOcrEngine>,
+    ) -> Result<String, JsValue> {
+        Err(JsValue::from_str(
+            "OCR is not yet supported in WebAssembly. Please use the Python or Rust APIs for OCR.",
+        ))
+    }
+
     // ========================================================================
     // Group 6c: Form Fields
     // ========================================================================
