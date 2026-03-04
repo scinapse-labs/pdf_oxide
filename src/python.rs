@@ -3221,31 +3221,6 @@ impl PyPdfPage {
         None // Simplified - would need proper ID parsing
     }
 
-    /// Render page to an image.
-    ///
-    /// Args:
-    ///     dpi (int): Dots per inch (default: 72)
-    ///     format (str): Output format ("png" or "jpeg", default: "png")
-    ///
-    /// Returns:
-    ///     bytes: Image data
-    ///
-    /// Example:
-    ///     >>> image_bytes = page.to_image(dpi=300)
-    ///     >>> with open("page.png", "wb") as f:
-    ///     ...     f.write(image_bytes)
-    #[cfg(feature = "rendering")]
-    fn to_image(&self, _dpi: Option<u32>, _format: Option<&str>) -> PyResult<Vec<u8>> {
-        // We need mutable access to the document to render
-        // But PyPdfPage only holds a cloned RustPdfPage which doesn't have the document
-        // Ideally, rendering should happen on the Document, or Page needs a ref to Document
-        // For now, we'll raise an error pointing users to PdfDocument.render_page()
-        // which we'll add next.
-        Err(PyRuntimeError::new_err(
-            "Rendering requires document access. Use doc.render_page(page_index) instead.",
-        ))
-    }
-
     /// Set text content for an element by ID.
     ///
     /// Args:
@@ -4994,6 +4969,7 @@ fn pdf_oxide(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyTextSpan>()?;
     m.add_class::<PyWord>()?;
     m.add_class::<PyTextLine>()?;
+    m.add_class::<PyPdfPageRegion>()?;
 
     // Form field types
     m.add_class::<PyFormField>()?;
