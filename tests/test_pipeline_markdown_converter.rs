@@ -39,6 +39,7 @@ fn make_span_with_order(
 ) -> OrderedTextSpan {
     OrderedTextSpan::new(
         TextSpan {
+            artifact_type: None,
             text: text.to_string(),
             bbox: Rect::new(x, y, 100.0, font_size),
             font_name: "TestFont".to_string(),

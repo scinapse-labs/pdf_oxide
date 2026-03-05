@@ -196,10 +196,11 @@ impl PyPdfDocument {
     ///     threshold (float, optional): Fraction of pages (0.0-1.0) where text must repeat (heuristic mode).
     #[pyo3(signature = (threshold=0.8))]
     fn remove_headers(&mut self, threshold: f32) -> PyResult<usize> {
-        let count = self.inner
+        let count = self
+            .inner
             .remove_headers(threshold)
             .map_err(|e| PyRuntimeError::new_err(format!("Header removal failed: {}", e)))?;
-        
+
         self.sync_editor_erasures()?;
         Ok(count)
     }
@@ -213,10 +214,11 @@ impl PyPdfDocument {
     ///     threshold (float, optional): Fraction of pages (0.0-1.0) where text must repeat (heuristic mode).
     #[pyo3(signature = (threshold=0.8))]
     fn remove_footers(&mut self, threshold: f32) -> PyResult<usize> {
-        let count = self.inner
+        let count = self
+            .inner
             .remove_footers(threshold)
             .map_err(|e| PyRuntimeError::new_err(format!("Footer removal failed: {}", e)))?;
-        
+
         self.sync_editor_erasures()?;
         Ok(count)
     }
@@ -230,10 +232,11 @@ impl PyPdfDocument {
     ///     threshold (float, optional): Fraction of pages (0.0-1.0) where text must repeat (heuristic mode).
     #[pyo3(signature = (threshold=0.8))]
     fn remove_artifacts(&mut self, threshold: f32) -> PyResult<usize> {
-        let count = self.inner
+        let count = self
+            .inner
             .remove_artifacts(threshold)
             .map_err(|e| PyRuntimeError::new_err(format!("Artifact removal failed: {}", e)))?;
-        
+
         self.sync_editor_erasures()?;
         Ok(count)
     }
@@ -4217,7 +4220,6 @@ impl PyTextChar {
 #[pyclass(name = "TextSpan")]
 #[derive(Clone)]
 pub struct PyTextSpan {
-
     inner: crate::layout::TextSpan,
 }
 

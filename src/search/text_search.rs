@@ -316,6 +316,7 @@ mod tests {
     fn test_build_text_with_positions() {
         let spans = vec![
             TextSpan {
+                artifact_type: None,
                 text: "Hello".to_string(),
                 bbox: Rect::new(0.0, 0.0, 50.0, 12.0),
                 font_name: "Arial".to_string(),
@@ -337,6 +338,7 @@ mod tests {
                 primary_detected: false,
             },
             TextSpan {
+                artifact_type: None,
                 text: "World".to_string(),
                 bbox: Rect::new(55.0, 0.0, 105.0, 12.0),
                 font_name: "Arial".to_string(),

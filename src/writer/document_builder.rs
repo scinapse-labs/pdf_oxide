@@ -774,7 +774,12 @@ impl DocumentBuilder {
                         };
 
                         // Calculate width for alignment
-                        let (text_width, _) = layout_engine.text_bounds(&text, &font_spec.name, font_spec.size, page_data.width);
+                        let (text_width, _) = layout_engine.text_bounds(
+                            &text,
+                            &font_spec.name,
+                            font_spec.size,
+                            page_data.width,
+                        );
 
                         let x = match element.alignment {
                             crate::writer::HFAlignment::Left => template.margin_left,
@@ -788,7 +793,9 @@ impl DocumentBuilder {
                         let y = page_data.height - header.offset;
 
                         page.add_element(&ContentElement::Text(TextContent {
-                            artifact_type: Some(crate::extractors::text::ArtifactType::Pagination(crate::extractors::text::PaginationSubtype::Header)),
+                            artifact_type: Some(crate::extractors::text::ArtifactType::Pagination(
+                                crate::extractors::text::PaginationSubtype::Header,
+                            )),
                             text,
                             bbox: Rect::new(x, y, text_width, style.font_size),
                             font: font_spec,
@@ -820,7 +827,12 @@ impl DocumentBuilder {
                         };
 
                         // Calculate width for alignment
-                        let (text_width, _) = layout_engine.text_bounds(&text, &font_spec.name, font_spec.size, page_data.width);
+                        let (text_width, _) = layout_engine.text_bounds(
+                            &text,
+                            &font_spec.name,
+                            font_spec.size,
+                            page_data.width,
+                        );
 
                         let x = match element.alignment {
                             crate::writer::HFAlignment::Left => template.margin_left,
@@ -834,7 +846,9 @@ impl DocumentBuilder {
                         let y = footer.offset;
 
                         page.add_element(&ContentElement::Text(TextContent {
-                            artifact_type: Some(crate::extractors::text::ArtifactType::Pagination(crate::extractors::text::PaginationSubtype::Footer)),
+                            artifact_type: Some(crate::extractors::text::ArtifactType::Pagination(
+                                crate::extractors::text::PaginationSubtype::Footer,
+                            )),
                             text,
                             bbox: Rect::new(x, y, text_width, style.font_size),
                             font: font_spec,

@@ -137,27 +137,6 @@ class PdfDocument:
         """
         ...
 
-    def erase_region(self, page: int, bbox: Tuple[float, float, float, float]) -> None:
-        """
-        Mark a specific rectangular region on a page for erasure.
-
-        Content in this region will be excluded from all subsequent text and image extractions.
-
-        Args:
-            page: Page index (0-based)
-            bbox: (x, y, width, height) in points
-        """
-        ...
-
-    def clear_erase_regions(self, page: int) -> None:
-        """
-        Clear all erase regions for a page.
-
-        Args:
-            page: Page index (0-based)
-        """
-        ...
-
     def remove_headers(self, threshold: float = 0.8) -> int:
         """
         Heuristically identify and remove repeating headers.

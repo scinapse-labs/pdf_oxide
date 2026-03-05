@@ -1320,6 +1320,7 @@ mod tests {
     #[test]
     fn test_text_content_element() {
         let text_content = TextContent {
+            artifact_type: None,
             text: "Test".to_string(),
             bbox: Rect::new(100.0, 700.0, 50.0, 12.0),
             font: FontSpec::new("Helvetica", 12.0),
@@ -1395,6 +1396,7 @@ mod tests {
         use crate::geometry::Rect;
 
         let text_content = TextContent {
+            artifact_type: None,
             text: "Hello".to_string(),
             bbox: Rect::new(100.0, 700.0, 50.0, 12.0),
             font: FontSpec::new("Helvetica", 12.0),
@@ -1596,6 +1598,7 @@ mod tests {
 
         // Add text
         let text_content = TextContent {
+            artifact_type: None,
             text: "Header".to_string(),
             bbox: Rect::new(72.0, 720.0, 100.0, 14.0),
             font: FontSpec::new("Helvetica", 14.0),
@@ -2439,6 +2442,7 @@ mod tests {
     #[test]
     fn test_add_elements() {
         let text1 = TextContent {
+            artifact_type: None,
             text: "First".to_string(),
             bbox: Rect::new(72.0, 720.0, 50.0, 12.0),
             font: FontSpec::new("Helvetica", 12.0),
@@ -2449,6 +2453,7 @@ mod tests {
             matrix: None,
         };
         let text2 = TextContent {
+            artifact_type: None,
             text: "Second".to_string(),
             bbox: Rect::new(72.0, 700.0, 50.0, 12.0),
             font: FontSpec::new("Helvetica", 12.0),

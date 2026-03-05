@@ -657,6 +657,7 @@ mod tests {
         use crate::layout::text_block::{Color, FontWeight};
 
         crate::layout::TextSpan {
+            artifact_type: None,
             text: text.to_string(),
             bbox: Rect::new(0.0, 0.0, 50.0, 12.0),
             font_name: "Test".to_string(),

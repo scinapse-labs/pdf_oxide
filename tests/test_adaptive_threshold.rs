@@ -31,6 +31,7 @@ use pdf_oxide::layout::{Color, FontWeight, TextSpan};
 /// * `height` - Height of the span (in points, usually font size)
 fn create_test_span(text: &str, x: f32, y: f32, width: f32, height: f32) -> TextSpan {
     TextSpan {
+        artifact_type: None,
         text: text.to_string(),
         bbox: Rect::new(x, y, width, height),
         font_name: "Times".to_string(),
@@ -90,6 +91,7 @@ fn create_multiline_document(gaps_per_line: Vec<Vec<f32>>, line_spacing: f32) ->
 
         for (word_idx, &gap) in gaps.iter().enumerate() {
             let span = TextSpan {
+                artifact_type: None,
                 text: format!("L{}W{}", line_idx, word_idx),
                 bbox: Rect::new(x_pos, y_pos, span_width, height),
                 font_name: "Times".to_string(),

@@ -146,6 +146,7 @@ mod tests {
 
     fn make_span(text: &str, x: f32, width: f32) -> TextSpan {
         TextSpan {
+            artifact_type: None,
             text: text.to_string(),
             bbox: Rect::new(x, 0.0, width, 12.0),
             font_name: "Arial".to_string(),

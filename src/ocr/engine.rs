@@ -57,6 +57,7 @@ impl OcrSpan {
         let font_size = self.estimate_font_size(height_pixels, scale);
 
         TextSpan {
+            artifact_type: None,
             text: self.text.clone(),
             bbox,
             font_name: "OCR".to_string(),

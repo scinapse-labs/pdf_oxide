@@ -81,48 +81,47 @@ def main():
     print(f"Found {total} PDFs across {len(CORPORA)} corpora\n")
 
     csv_path = text_dir / "results.csv"
-    csv_file = open(csv_path, "w", newline="")
-    writer = csv.writer(csv_file)
-    writer.writerow(["pdf_path", "pdf_filename", "corpus", "pages", "chars", "ms", "error"])
+    with open(csv_path, "w", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(["pdf_path", "pdf_filename", "corpus", "pages", "chars", "ms", "error"])
 
-    processed = 0
-    global_start = time.perf_counter()
+        processed = 0
+        global_start = time.perf_counter()
 
-    for idx, (pdf_path, corpus) in enumerate(pdfs, 1):
-        filename = os.path.basename(pdf_path)
-        if filename in SKIP_FILES:
-            continue
+        for idx, (pdf_path, corpus) in enumerate(pdfs, 1):
+            filename = os.path.basename(pdf_path)
+            if filename in SKIP_FILES:
+                continue
 
-        start = time.perf_counter()
-        try:
-            text, pages = extract_pymupdf(pdf_path)
-            error = ""
-        except Exception as e:
-            text = ""
-            pages = -1
-            error = str(e)[:200]
-        ms = (time.perf_counter() - start) * 1000
-        chars = len(text)
+            start = time.perf_counter()
+            try:
+                text, pages = extract_pymupdf(pdf_path)
+                error = ""
+            except Exception as e:
+                text = ""
+                pages = -1
+                error = str(e)[:200]
+            ms = (time.perf_counter() - start) * 1000
+            chars = len(text)
 
-        # Save text file
-        safe_name = f"{corpus}__{filename}".replace(" ", "_")
-        txt_name = safe_name.rsplit(".", 1)[0] + ".txt"
-        if text:
-            (text_dir / txt_name).write_text(text, encoding="utf-8")
+            # Save text file
+            safe_name = f"{corpus}__{filename}".replace(" ", "_")
+            txt_name = safe_name.rsplit(".", 1)[0] + ".txt"
+            if text:
+                (text_dir / txt_name).write_text(text, encoding="utf-8")
 
-        writer.writerow([pdf_path, filename, corpus, pages, chars, f"{ms:.1f}", error])
-        csv_file.flush()
+            writer.writerow([pdf_path, filename, corpus, pages, chars, f"{ms:.1f}", error])
+            csv_file.flush()
 
-        processed += 1
-        if processed % 100 == 0 or processed == total or error:
-            tag = f" [err: {error[:40]}]" if error else ""
-            print(f"  [{idx}/{total}] chars={chars:>7} {ms:.0f}ms {filename[:50]}{tag}")
+            processed += 1
+            if processed % 100 == 0 or processed == total or error:
+                tag = f" [err: {error[:40]}]" if error else ""
+                print(f"  [{idx}/{total}] chars={chars:>7} {ms:.0f}ms {filename[:50]}{tag}")
 
-    csv_file.close()
-    total_secs = time.perf_counter() - global_start
-    print(f"\nDone: {processed} PDFs in {total_secs:.1f}s")
-    print(f"Output: {text_dir}")
-    print(f"CSV:    {csv_path}")
+        total_secs = time.perf_counter() - global_start
+        print(f"\nDone: {processed} PDFs in {total_secs:.1f}s")
+        print(f"Output: {text_dir}")
+        print(f"CSV:    {csv_path}")
 
 
 if __name__ == "__main__":

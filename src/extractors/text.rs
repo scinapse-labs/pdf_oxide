@@ -5572,7 +5572,7 @@ impl TextExtractor {
             .map(|font| font.is_italic())
             .unwrap_or(false);
         let span = TextSpan {
-                text: " ".to_string(),
+            text: " ".to_string(),
             bbox: Rect {
                 x: user_pos.x,
                 y: user_pos.y,
@@ -6388,6 +6388,7 @@ mod tests {
     fn test_split_boundary_merges_with_space() {
         let spans = vec![
             TextSpan {
+                artifact_type: None,
                 text: "the".to_string(),
                 bbox: Rect {
                     x: 0.0,
@@ -6410,6 +6411,7 @@ mod tests {
                 primary_detected: false,
             },
             TextSpan {
+                artifact_type: None,
                 text: "General".to_string(),
                 bbox: Rect {
                     x: 10.0,
@@ -7382,6 +7384,7 @@ mod tests {
     fn test_update_artifact_state_artifact_present() {
         let mut extractor = TextExtractor::new();
         extractor.marked_content_stack.push(MarkedContentContext {
+            artifact_type: None,
             tag: "Artifact".to_string(),
             is_artifact: true,
             actual_text: None,
@@ -7395,12 +7398,14 @@ mod tests {
     fn test_update_artifact_state_nested_non_artifact() {
         let mut extractor = TextExtractor::new();
         extractor.marked_content_stack.push(MarkedContentContext {
+            artifact_type: None,
             tag: "Artifact".to_string(),
             is_artifact: true,
             actual_text: None,
             expansion: None,
         });
         extractor.marked_content_stack.push(MarkedContentContext {
+            artifact_type: None,
             tag: "Span".to_string(),
             is_artifact: false,
             actual_text: None,
@@ -7828,6 +7833,7 @@ mod tests {
         let mut extractor = TextExtractor::new();
         extractor.spans = vec![
             TextSpan {
+                artifact_type: None,
                 text: "Hello".to_string(),
                 bbox: Rect::new(100.0, 700.0, 30.0, 12.0),
                 font_name: "F1".to_string(),
@@ -7845,6 +7851,7 @@ mod tests {
                 primary_detected: false,
             },
             TextSpan {
+                artifact_type: None,
                 text: "Hello".to_string(),
                 bbox: Rect::new(101.0, 700.0, 30.0, 12.0), // Very close
                 font_name: "F1".to_string(),
@@ -7891,6 +7898,7 @@ mod tests {
         // Create spans all in one column
         for i in 0..10 {
             extractor.spans.push(TextSpan {
+                artifact_type: None,
                 text: format!("Line {}", i),
                 bbox: Rect::new(50.0, 700.0 - (i as f32 * 14.0), 200.0, 12.0),
                 font_name: "F1".to_string(),
@@ -8055,6 +8063,7 @@ mod tests {
 
         extractor.spans = vec![
             TextSpan {
+                artifact_type: None,
                 text: "Hello".to_string(),
                 bbox: Rect::new(100.0, 700.0, 30.0, 12.0),
                 font_name: "F1".to_string(),
@@ -8072,6 +8081,7 @@ mod tests {
                 primary_detected: false,
             },
             TextSpan {
+                artifact_type: None,
                 text: "World".to_string(),
                 bbox: Rect::new(131.0, 700.0, 30.0, 12.0), // 1pt gap
                 font_name: "F1".to_string(),
@@ -8103,6 +8113,7 @@ mod tests {
 
         extractor.spans = vec![
             TextSpan {
+                artifact_type: None,
                 text: "Hello".to_string(),
                 bbox: Rect::new(100.0, 700.0, 30.0, 12.0),
                 font_name: "F1".to_string(),
@@ -8120,6 +8131,7 @@ mod tests {
                 primary_detected: false,
             },
             TextSpan {
+                artifact_type: None,
                 text: "World".to_string(),
                 bbox: Rect::new(100.0, 680.0, 30.0, 12.0), // Different line
                 font_name: "F1".to_string(),
@@ -8156,6 +8168,7 @@ mod tests {
 
         extractor.spans = vec![
             TextSpan {
+                artifact_type: None,
                 text: "Left".to_string(),
                 bbox: Rect::new(50.0, 700.0, 30.0, 12.0),
                 font_name: "F1".to_string(),
@@ -8173,6 +8186,7 @@ mod tests {
                 primary_detected: false,
             },
             TextSpan {
+                artifact_type: None,
                 text: "Right".to_string(),
                 bbox: Rect::new(300.0, 700.0, 30.0, 12.0), // Large gap (column boundary)
                 font_name: "F1".to_string(),
@@ -8202,6 +8216,7 @@ mod tests {
 
         extractor.spans = vec![
             TextSpan {
+                artifact_type: None,
                 text: "Hello".to_string(),
                 bbox: Rect::new(100.0, 700.0, 30.0, 12.0),
                 font_name: "F1".to_string(),
@@ -8219,6 +8234,7 @@ mod tests {
                 primary_detected: false,
             },
             TextSpan {
+                artifact_type: None,
                 text: " ".to_string(),
                 bbox: Rect::new(130.0, 700.0, 2.0, 12.0),
                 font_name: "F1".to_string(),
@@ -8236,6 +8252,7 @@ mod tests {
                 primary_detected: false,
             },
             TextSpan {
+                artifact_type: None,
                 text: "World".to_string(),
                 bbox: Rect::new(132.0, 700.0, 30.0, 12.0),
                 font_name: "F1".to_string(),
@@ -10384,6 +10401,7 @@ mod tests {
         let mut extractor = TextExtractor::new();
         extractor.spans = vec![
             TextSpan {
+                artifact_type: None,
                 text: "Hello World".to_string(), // >= 5 chars
                 bbox: Rect::new(100.0, 700.0, 60.0, 12.0),
                 font_name: "F1".to_string(),
@@ -10401,6 +10419,7 @@ mod tests {
                 primary_detected: false,
             },
             TextSpan {
+                artifact_type: None,
                 text: "Hello World".to_string(), // Same text, overlapping position
                 bbox: Rect::new(102.0, 700.0, 60.0, 12.0), // X within 5pt
                 font_name: "F1".to_string(),
@@ -10428,6 +10447,7 @@ mod tests {
         let mut extractor = TextExtractor::new();
         extractor.spans = vec![
             TextSpan {
+                artifact_type: None,
                 text: "Hello World".to_string(),
                 bbox: Rect::new(100.0, 700.0, 60.0, 12.0),
                 font_name: "F1".to_string(),
@@ -10445,7 +10465,8 @@ mod tests {
                 primary_detected: false,
             },
             TextSpan {
-                text: "Hello World".to_string(),           // Same text but far apart
+                artifact_type: None,
+                text: "Hello World".to_string(), // Same text but far apart
                 bbox: Rect::new(500.0, 700.0, 60.0, 12.0), // X > 5pt difference
                 font_name: "F1".to_string(),
                 font_size: 12.0,
@@ -10532,7 +10553,8 @@ mod tests {
     fn test_split_fused_words_camelcase() {
         let mut extractor = TextExtractor::new();
         extractor.spans = vec![TextSpan {
-                text: "theGeneral".to_string(),
+            artifact_type: None,
+            text: "theGeneral".to_string(),
             bbox: Rect::new(100.0, 700.0, 60.0, 12.0),
             font_name: "F1".to_string(),
             font_size: 12.0,
@@ -10560,7 +10582,8 @@ mod tests {
     fn test_split_fused_words_no_split() {
         let mut extractor = TextExtractor::new();
         extractor.spans = vec![TextSpan {
-                text: "hello".to_string(),
+            artifact_type: None,
+            text: "hello".to_string(),
             bbox: Rect::new(100.0, 700.0, 30.0, 12.0),
             font_name: "F1".to_string(),
             font_size: 12.0,
@@ -10735,6 +10758,7 @@ mod tests {
 
         extractor.spans = vec![
             TextSpan {
+                artifact_type: None,
                 text: "Right Col".to_string(),
                 bbox: Rect::new(350.0, 700.0, 100.0, 12.0),
                 font_name: "F1".to_string(),
@@ -10752,6 +10776,7 @@ mod tests {
                 primary_detected: false,
             },
             TextSpan {
+                artifact_type: None,
                 text: "Left Col".to_string(),
                 bbox: Rect::new(50.0, 700.0, 100.0, 12.0),
                 font_name: "F1".to_string(),
@@ -10825,6 +10850,7 @@ mod tests {
 
         extractor.spans = vec![
             TextSpan {
+                artifact_type: None,
                 text: "Hello ".to_string(), // ends with space
                 bbox: Rect::new(100.0, 700.0, 35.0, 12.0),
                 font_name: "F1".to_string(),
@@ -10842,7 +10868,8 @@ mod tests {
                 primary_detected: false,
             },
             TextSpan {
-                text: " World".to_string(),                // starts with space
+                artifact_type: None,
+                text: " World".to_string(), // starts with space
                 bbox: Rect::new(136.0, 700.0, 35.0, 12.0), // 1pt gap
                 font_name: "F1".to_string(),
                 font_size: 12.0,
@@ -10987,6 +11014,7 @@ mod tests {
         let mut extractor = TextExtractor::new();
         extractor.current_mcid = Some(10);
         extractor.marked_content_stack.push(MarkedContentContext {
+            artifact_type: None,
             tag: "P".to_string(),
             is_artifact: false,
             actual_text: None,
@@ -11130,6 +11158,7 @@ mod tests {
         let mut extractor = TextExtractor::new();
         extractor.spans = vec![
             TextSpan {
+                artifact_type: None,
                 text: "Line2".to_string(),
                 bbox: Rect::new(50.0, 680.0, 100.0, 12.0),
                 font_name: "F1".to_string(),
@@ -11147,6 +11176,7 @@ mod tests {
                 primary_detected: false,
             },
             TextSpan {
+                artifact_type: None,
                 text: "Line1".to_string(),
                 bbox: Rect::new(50.0, 700.0, 100.0, 12.0),
                 font_name: "F1".to_string(),
@@ -11260,6 +11290,7 @@ mod tests {
 
         extractor.spans = vec![
             TextSpan {
+                artifact_type: None,
                 text: "Hello".to_string(),
                 bbox: Rect::new(100.0, 700.0, 30.0, 12.0),
                 font_name: "F1".to_string(),
@@ -11277,6 +11308,7 @@ mod tests {
                 primary_detected: false,
             },
             TextSpan {
+                artifact_type: None,
                 text: " ".to_string(), // offset_semantic space
                 bbox: Rect::new(130.5, 700.0, 2.0, 12.0),
                 font_name: "F1".to_string(),
@@ -11444,6 +11476,7 @@ fn test_parse_artifact_type_empty() {
 fn test_marked_content_context_with_actual_text() {
     // Verify MarkedContentContext correctly stores ActualText
     let ctx = MarkedContentContext {
+        artifact_type: None,
         tag: "Span".to_string(),
         is_artifact: false,
         actual_text: Some("fi".to_string()), // Ligature expansion
@@ -11458,6 +11491,7 @@ fn test_marked_content_context_with_actual_text() {
 fn test_marked_content_context_with_expansion() {
     // Verify MarkedContentContext correctly stores /E expansion
     let ctx = MarkedContentContext {
+        artifact_type: None,
         tag: "Span".to_string(),
         is_artifact: false,
         actual_text: None,
@@ -11489,6 +11523,7 @@ fn test_get_current_actual_text_finds_first() {
 
     // Push contexts with ActualText
     extractor.marked_content_stack.push(MarkedContentContext {
+        artifact_type: None,
         tag: "Span".to_string(),
         is_artifact: false,
         actual_text: Some("outer text".to_string()),
@@ -11496,6 +11531,7 @@ fn test_get_current_actual_text_finds_first() {
     });
 
     extractor.marked_content_stack.push(MarkedContentContext {
+        artifact_type: None,
         tag: "Span".to_string(),
         is_artifact: false,
         actual_text: Some("inner text".to_string()),
@@ -11514,6 +11550,7 @@ fn test_get_current_actual_text_skips_none() {
 
     // Push context with ActualText
     extractor.marked_content_stack.push(MarkedContentContext {
+        artifact_type: None,
         tag: "Span".to_string(),
         is_artifact: false,
         actual_text: Some("replacement text".to_string()),
@@ -11522,6 +11559,7 @@ fn test_get_current_actual_text_skips_none() {
 
     // Push context without ActualText
     extractor.marked_content_stack.push(MarkedContentContext {
+        artifact_type: None,
         tag: "Span".to_string(),
         is_artifact: false,
         actual_text: None,

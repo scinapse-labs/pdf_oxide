@@ -19,7 +19,7 @@
 //! use pdf_oxide::geometry::Rect;
 //!
 //! // Create a text element (for writing)
-//! let text = TextContent {
+//! let text = TextContent { artifact_type: None,
 //!     text: "Hello, World!".to_string(),
 //!     bbox: Rect::new(72.0, 720.0, 100.0, 12.0),
 //!     font: FontSpec::default(),
@@ -181,6 +181,7 @@ mod tests {
     #[test]
     fn test_content_element_bbox() {
         let text = TextContent {
+            artifact_type: None,
             text: "Test".to_string(),
             bbox: Rect::new(10.0, 20.0, 50.0, 12.0),
             font: FontSpec::default(),
@@ -203,6 +204,7 @@ mod tests {
     #[test]
     fn test_content_element_type_checks() {
         let text = ContentElement::Text(TextContent {
+            artifact_type: None,
             text: "Test".to_string(),
             bbox: Rect::new(0.0, 0.0, 10.0, 10.0),
             font: FontSpec::default(),
@@ -223,6 +225,7 @@ mod tests {
     #[test]
     fn test_reading_order() {
         let text = ContentElement::Text(TextContent {
+            artifact_type: None,
             text: "First".to_string(),
             bbox: Rect::new(0.0, 0.0, 10.0, 10.0),
             font: FontSpec::default(),

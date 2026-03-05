@@ -321,6 +321,7 @@ mod tests {
     #[test]
     fn test_text_span_conversion() {
         let span = TextSpan {
+            artifact_type: None,
             text: "Test".to_string(),
             bbox: Rect::new(10.0, 20.0, 40.0, 12.0),
             font_name: "Times".to_string(),
@@ -336,7 +337,6 @@ mod tests {
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             primary_detected: false,
-            artifact_type: None,
         };
 
         let content: TextContent = span.into();

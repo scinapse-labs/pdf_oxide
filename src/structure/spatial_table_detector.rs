@@ -971,6 +971,7 @@ mod tests {
     /// Helper to create test spans
     fn create_test_span(text: &str, x: f32, y: f32, width: f32, height: f32) -> TextSpan {
         TextSpan {
+            artifact_type: None,
             text: text.to_string(),
             bbox: Rect::new(x, y, width, height),
             font_name: "TestFont".to_string(),

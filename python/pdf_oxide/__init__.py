@@ -48,25 +48,25 @@ from .pdf_oxide import (
     # Advanced Graphics
     Color,
     ExtGState,
+    HeaderFooter,
+    # Page Templates
+    HFStyle,
     LinearGradient,
     LineCap,
     LineJoin,
-    PatternPresets,
-    # PDF Creation
-    Pdf,
-    PdfDocument,
-    RadialGradient,
-    # Page Templates
-    HFStyle,
-    HeaderFooter,
-    PageTemplate,
-    # Extraction
-    TextSpan,
     # OCR (always available as stub if feature is off)
     OcrConfig,
     OcrEngine,
     # Office (always available as stub if feature is off)
     OfficeConverter,
+    PageTemplate,
+    PatternPresets,
+    # PDF Creation
+    Pdf,
+    PdfDocument,
+    RadialGradient,
+    # Extraction
+    TextSpan,
 )
 
 

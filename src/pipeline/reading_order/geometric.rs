@@ -207,6 +207,7 @@ mod tests {
 
     fn make_span(text: &str, x: f32, y: f32) -> TextSpan {
         TextSpan {
+            artifact_type: None,
             text: text.to_string(),
             bbox: Rect::new(x, y, 50.0, 12.0),
             font_name: "Test".to_string(),

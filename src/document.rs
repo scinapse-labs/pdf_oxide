@@ -3053,7 +3053,7 @@ impl PdfDocument {
     /// Uses spec-compliant /Artifact tags when available (100% accuracy), or
     /// falls back to heuristic analysis of the top 15% of pages.
     pub fn remove_headers(&mut self, threshold: f32) -> Result<usize> {
-        if threshold < 0.0 || threshold > 1.0 {
+        if !(0.0..=1.0).contains(&threshold) {
             return Err(crate::error::Error::InvalidOperation(
                 "Threshold must be between 0.0 and 1.0".to_string(),
             ));
@@ -3066,7 +3066,7 @@ impl PdfDocument {
     /// Uses spec-compliant /Artifact tags when available (100% accuracy), or
     /// falls back to heuristic analysis of the bottom 15% of pages.
     pub fn remove_footers(&mut self, threshold: f32) -> Result<usize> {
-        if threshold < 0.0 || threshold > 1.0 {
+        if !(0.0..=1.0).contains(&threshold) {
             return Err(crate::error::Error::InvalidOperation(
                 "Threshold must be between 0.0 and 1.0".to_string(),
             ));
@@ -3082,7 +3082,7 @@ impl PdfDocument {
     /// # Arguments
     /// * `threshold` - Fraction of pages (0.0-1.0) where text must repeat to be removed (heuristic mode only).
     pub fn remove_artifacts(&mut self, threshold: f32) -> Result<usize> {
-        if threshold < 0.0 || threshold > 1.0 {
+        if !(0.0..=1.0).contains(&threshold) {
             return Err(crate::error::Error::InvalidOperation(
                 "Threshold must be between 0.0 and 1.0".to_string(),
             ));
@@ -3936,6 +3936,7 @@ impl PdfDocument {
             };
 
             spans.push(TextSpan {
+                artifact_type: None,
                 text,
                 bbox: rect,
                 font_name: String::new(),
@@ -3955,7 +3956,6 @@ impl PdfDocument {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             });
         }
 
@@ -5881,6 +5881,7 @@ impl PdfDocument {
         let spans: Vec<_> = words
             .into_iter()
             .map(|w| crate::layout::TextSpan {
+                artifact_type: None,
                 text: w.text,
                 bbox: w.bbox,
                 font_name: w.dominant_font,
@@ -5900,7 +5901,6 @@ impl PdfDocument {
                 word_spacing: 0.0,
                 horizontal_scaling: 1.0,
                 primary_detected: false,
-                artifact_type: None,
             })
             .collect();
 
@@ -6878,6 +6878,7 @@ impl PdfDocument {
         let word_spans: Vec<crate::layout::TextSpan> = words
             .into_iter()
             .map(|w| crate::layout::TextSpan {
+                artifact_type: None,
                 text: w.text,
                 bbox: w.bbox,
                 font_name: w.dominant_font,
@@ -6897,7 +6898,6 @@ impl PdfDocument {
                 word_spacing: 0.0,
                 horizontal_scaling: 1.0,
                 primary_detected: false,
-                artifact_type: None,
             })
             .collect();
 
@@ -9560,6 +9560,7 @@ mod tests {
     /// Helper to create a TextSpan with minimal required fields for testing.
     fn make_test_span(text: &str, x: f32, y: f32, width: f32, font_size: f32) -> TextSpan {
         TextSpan {
+            artifact_type: None,
             text: text.to_string(),
             bbox: crate::geometry::Rect {
                 x,

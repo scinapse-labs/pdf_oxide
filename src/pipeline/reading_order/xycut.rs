@@ -407,6 +407,7 @@ mod tests {
         use crate::layout::{Color, FontWeight};
 
         TextSpan {
+            artifact_type: None,
             text: "test".to_string(),
             bbox: Rect::new(x, y, width, height),
             font_size: 12.0,

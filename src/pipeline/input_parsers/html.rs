@@ -335,7 +335,7 @@ fn create_text_element(
         FontWeight::Normal
     };
 
-    ContentElement::Text(TextContent {
+    ContentElement::Text(TextContent { artifact_type: None, 
         text,
         bbox: Rect::new(
             x, y, 400.0, // Approximate width

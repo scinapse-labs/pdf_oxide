@@ -150,7 +150,7 @@ impl PlainTextParser {
     ) -> ContentElement {
         let height = font_size;
 
-        ContentElement::Text(TextContent {
+        ContentElement::Text(TextContent { artifact_type: None, 
             text: text.to_string(),
             bbox: Rect::new(x, y, width, height),
             font: FontSpec::new(font_name, font_size),

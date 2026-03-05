@@ -355,11 +355,11 @@ pub struct AdaptiveThresholdResult {
 /// use pdf_oxide::geometry::Rect;
 ///
 /// let spans = vec![
-///     TextSpan {
+///     TextSpan { artifact_type: None,
 ///         bbox: Rect::new(10.0, 10.0, 30.0, 12.0),  // right edge at 40.0
 ///         // ...other fields...
 ///     },
-///     TextSpan {
+///     TextSpan { artifact_type: None,
 ///         bbox: Rect::new(45.0, 10.0, 30.0, 12.0),  // left edge at 45.0
 ///         // ...other fields...
 ///     },
@@ -822,6 +822,7 @@ mod tests {
 
         let spans = vec![
             TextSpan {
+                artifact_type: None,
                 text: "Hello".to_string(),
                 bbox: Rect::new(0.0, 0.0, 30.0, 12.0),
                 font_name: "Arial".to_string(),
@@ -839,6 +840,7 @@ mod tests {
                 primary_detected: false,
             },
             TextSpan {
+                artifact_type: None,
                 text: "World".to_string(),
                 bbox: Rect::new(35.0, 0.0, 30.0, 12.0),
                 font_name: "Arial".to_string(),
@@ -941,6 +943,7 @@ mod tests {
 
         let spans = vec![
             TextSpan {
+                artifact_type: None,
                 text: "A".to_string(),
                 bbox: Rect::new(0.0, 0.0, 10.0, 12.0),
                 font_name: "Arial".to_string(),
@@ -958,6 +961,7 @@ mod tests {
                 primary_detected: false,
             },
             TextSpan {
+                artifact_type: None,
                 text: "B".to_string(),
                 bbox: Rect::new(15.0, 0.0, 10.0, 12.0),
                 font_name: "Arial".to_string(),

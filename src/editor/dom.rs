@@ -2084,6 +2084,7 @@ mod tests {
 
     fn create_test_text(text: &str, x: f32, y: f32) -> TextContent {
         TextContent {
+            artifact_type: None,
             text: text.to_string(),
             bbox: Rect::new(x, y, 100.0, 12.0),
             font: FontSpec {
