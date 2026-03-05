@@ -2249,11 +2249,11 @@ impl PyPdfDocument {
         #[cfg(feature = "ocr")]
         {
             let ocr_engine = if let Some(eng) = engine {
-                Some(eng.extract::<&PyOcrEngine>()?)
+                Some(eng.extract::<PyRef<PyOcrEngine>>()?)
             } else {
                 None
             };
-            let engine_inner = ocr_engine.map(|e| &e.inner);
+            let engine_inner = ocr_engine.as_ref().map(|e| &e.inner);
             let options = crate::ocr::OcrExtractOptions::default();
             self.inner
                 .extract_text_with_ocr(page, engine_inner, options)
@@ -3641,6 +3641,7 @@ impl PyPdfPage {
             },
             style: TextStyle::default(),
             reading_order: None,
+            artifact_type: None,
             origin: None,
             rotation_degrees: None,
             matrix: None,
@@ -4148,6 +4149,7 @@ impl PyTextChar {
 #[pyclass(name = "TextSpan")]
 #[derive(Clone)]
 pub struct PyTextSpan {
+
     inner: crate::layout::TextSpan,
 }
 

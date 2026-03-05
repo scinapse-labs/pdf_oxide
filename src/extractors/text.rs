@@ -5129,7 +5129,7 @@ impl TextExtractor {
             horizontal_scaling: state.horizontal_scaling,
             is_italic,
             primary_detected: true,
-            artifact_type: None, // Mark as created by primary detector
+            artifact_type: None,
         };
 
         // Step 6: Increment sequence counter and add to spans
@@ -5572,7 +5572,7 @@ impl TextExtractor {
             .map(|font| font.is_italic())
             .unwrap_or(false);
         let span = TextSpan {
-            text: " ".to_string(),
+                text: " ".to_string(),
             bbox: Rect {
                 x: user_pos.x,
                 y: user_pos.y,
@@ -5677,7 +5677,7 @@ impl TextExtractor {
                     horizontal_scaling: 100.0, // Tz - per ISO 32000-1:2008 Section 9.3.1
                     is_italic: is_italic_buf,
                     primary_detected: false,
-                    artifact_type: None, // Default to false for backward compatibility
+                    artifact_type: None,
                 };
                 self.span_sequence_counter += 1;
 
@@ -6408,7 +6408,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
             TextSpan {
                 text: "General".to_string(),
@@ -6427,7 +6426,6 @@ mod tests {
                 split_boundary_before: true, // Marks this as part of a split boundary
                 offset_semantic: false,
                 primary_detected: false,
-                artifact_type: None,
                 is_italic: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
@@ -7386,7 +7384,6 @@ mod tests {
         extractor.marked_content_stack.push(MarkedContentContext {
             tag: "Artifact".to_string(),
             is_artifact: true,
-            artifact_type: None,
             actual_text: None,
             expansion: None,
         });
@@ -7400,14 +7397,12 @@ mod tests {
         extractor.marked_content_stack.push(MarkedContentContext {
             tag: "Artifact".to_string(),
             is_artifact: true,
-            artifact_type: None,
             actual_text: None,
             expansion: None,
         });
         extractor.marked_content_stack.push(MarkedContentContext {
             tag: "Span".to_string(),
             is_artifact: false,
-            artifact_type: None,
             actual_text: None,
             expansion: None,
         });
@@ -7848,7 +7843,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
             TextSpan {
                 text: "Hello".to_string(),
@@ -7866,7 +7860,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
         ];
 
@@ -7913,7 +7906,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             });
         }
 
@@ -8078,7 +8070,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
             TextSpan {
                 text: "World".to_string(),
@@ -8096,7 +8087,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
         ];
 
@@ -8128,7 +8118,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
             TextSpan {
                 text: "World".to_string(),
@@ -8146,7 +8135,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
         ];
 
@@ -8183,7 +8171,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
             TextSpan {
                 text: "Right".to_string(),
@@ -8201,7 +8188,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
         ];
 
@@ -8231,7 +8217,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
             TextSpan {
                 text: " ".to_string(),
@@ -8249,7 +8234,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
             TextSpan {
                 text: "World".to_string(),
@@ -8267,7 +8251,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
         ];
 
@@ -10416,7 +10399,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
             TextSpan {
                 text: "Hello World".to_string(), // Same text, overlapping position
@@ -10434,7 +10416,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
         ];
 
@@ -10462,7 +10443,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
             TextSpan {
                 text: "Hello World".to_string(),           // Same text but far apart
@@ -10480,7 +10460,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
         ];
 
@@ -10553,7 +10532,7 @@ mod tests {
     fn test_split_fused_words_camelcase() {
         let mut extractor = TextExtractor::new();
         extractor.spans = vec![TextSpan {
-            text: "theGeneral".to_string(),
+                text: "theGeneral".to_string(),
             bbox: Rect::new(100.0, 700.0, 60.0, 12.0),
             font_name: "F1".to_string(),
             font_size: 12.0,
@@ -10568,7 +10547,6 @@ mod tests {
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             primary_detected: false,
-            artifact_type: None,
         }];
 
         extractor.split_fused_words();
@@ -10582,7 +10560,7 @@ mod tests {
     fn test_split_fused_words_no_split() {
         let mut extractor = TextExtractor::new();
         extractor.spans = vec![TextSpan {
-            text: "hello".to_string(),
+                text: "hello".to_string(),
             bbox: Rect::new(100.0, 700.0, 30.0, 12.0),
             font_name: "F1".to_string(),
             font_size: 12.0,
@@ -10597,7 +10575,6 @@ mod tests {
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             primary_detected: false,
-            artifact_type: None,
         }];
 
         extractor.split_fused_words();
@@ -10773,7 +10750,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
             TextSpan {
                 text: "Left Col".to_string(),
@@ -10791,7 +10767,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
         ];
 
@@ -10865,7 +10840,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
             TextSpan {
                 text: " World".to_string(),                // starts with space
@@ -10883,7 +10857,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
         ];
 
@@ -11016,7 +10989,6 @@ mod tests {
         extractor.marked_content_stack.push(MarkedContentContext {
             tag: "P".to_string(),
             is_artifact: false,
-            artifact_type: None,
             actual_text: None,
             expansion: None,
         });
@@ -11173,7 +11145,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
             TextSpan {
                 text: "Line1".to_string(),
@@ -11191,7 +11162,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
         ];
 
@@ -11305,7 +11275,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
             TextSpan {
                 text: " ".to_string(), // offset_semantic space
@@ -11323,7 +11292,6 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-                artifact_type: None,
             },
         ];
 
@@ -11478,7 +11446,6 @@ fn test_marked_content_context_with_actual_text() {
     let ctx = MarkedContentContext {
         tag: "Span".to_string(),
         is_artifact: false,
-        artifact_type: None,
         actual_text: Some("fi".to_string()), // Ligature expansion
         expansion: None,
     };
@@ -11493,7 +11460,6 @@ fn test_marked_content_context_with_expansion() {
     let ctx = MarkedContentContext {
         tag: "Span".to_string(),
         is_artifact: false,
-        artifact_type: None,
         actual_text: None,
         expansion: Some("Portable Document Format".to_string()),
     };
@@ -11525,7 +11491,6 @@ fn test_get_current_actual_text_finds_first() {
     extractor.marked_content_stack.push(MarkedContentContext {
         tag: "Span".to_string(),
         is_artifact: false,
-        artifact_type: None,
         actual_text: Some("outer text".to_string()),
         expansion: None,
     });
@@ -11533,7 +11498,6 @@ fn test_get_current_actual_text_finds_first() {
     extractor.marked_content_stack.push(MarkedContentContext {
         tag: "Span".to_string(),
         is_artifact: false,
-        artifact_type: None,
         actual_text: Some("inner text".to_string()),
         expansion: None,
     });
@@ -11552,7 +11516,6 @@ fn test_get_current_actual_text_skips_none() {
     extractor.marked_content_stack.push(MarkedContentContext {
         tag: "Span".to_string(),
         is_artifact: false,
-        artifact_type: None,
         actual_text: Some("replacement text".to_string()),
         expansion: None,
     });
@@ -11561,7 +11524,6 @@ fn test_get_current_actual_text_skips_none() {
     extractor.marked_content_stack.push(MarkedContentContext {
         tag: "Span".to_string(),
         is_artifact: false,
-        artifact_type: None,
         actual_text: None,
         expansion: None,
     });

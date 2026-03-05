@@ -212,6 +212,7 @@ impl<'a> FluentPageBuilder<'a> {
             },
             style: Default::default(),
             reading_order: Some(page.elements.len()),
+            artifact_type: None,
             origin: None,
             rotation_degrees: None,
             matrix: None,
@@ -260,6 +261,7 @@ impl<'a> FluentPageBuilder<'a> {
                 },
                 style: Default::default(),
                 reading_order: Some(page.elements.len()),
+                artifact_type: None,
                 origin: None,
                 rotation_degrees: None,
                 matrix: None,
@@ -747,7 +749,10 @@ impl DocumentBuilder {
         for (idx, page_data) in self.pages.iter().enumerate() {
             let mut page = writer.add_page(page_data.width, page_data.height);
 
-            // 1. Apply Template (Headers/Footers)
+            // 1. Add normal elements
+            page.add_elements(&page_data.elements);
+
+            // 2. Apply Template (Headers/Footers) - Draw on top of content
             if let Some(ref template) = self.template {
                 let page_number = idx + 1;
                 let context =
@@ -755,30 +760,38 @@ impl DocumentBuilder {
                         .with_title(self.metadata.title.clone().unwrap_or_default())
                         .with_author(self.metadata.author.clone().unwrap_or_default());
 
+                let layout_engine = TextLayout::new();
+
                 // Apply Header
                 if let Some(header) = template.get_header(page_number) {
                     for element in header.elements() {
                         let text = element.resolve(&context);
                         let style = element.style.as_ref().unwrap_or(&header.style);
 
+                        let font_spec = crate::elements::FontSpec {
+                            name: style.font_name.clone(),
+                            size: style.font_size,
+                        };
+
+                        // Calculate width for alignment
+                        let (text_width, _) = layout_engine.text_bounds(&text, &font_spec.name, font_spec.size, page_data.width);
+
                         let x = match element.alignment {
-                            crate::writer::page_template::HFAlignment::Left => template.margin_left,
-                            crate::writer::page_template::HFAlignment::Center => {
-                                page_data.width / 2.0
+                            crate::writer::HFAlignment::Left => template.margin_left,
+                            crate::writer::HFAlignment::Center => {
+                                (page_data.width - text_width) / 2.0
                             },
-                            crate::writer::page_template::HFAlignment::Right => {
-                                page_data.width - template.margin_right
+                            crate::writer::HFAlignment::Right => {
+                                page_data.width - template.margin_right - text_width
                             },
                         };
                         let y = page_data.height - header.offset;
 
                         page.add_element(&ContentElement::Text(TextContent {
+                            artifact_type: Some(crate::extractors::text::ArtifactType::Pagination(crate::extractors::text::PaginationSubtype::Header)),
                             text,
-                            bbox: Rect::new(x, y, 0.0, style.font_size),
-                            font: crate::elements::FontSpec {
-                                name: style.font_name.clone(),
-                                size: style.font_size,
-                            },
+                            bbox: Rect::new(x, y, text_width, style.font_size),
+                            font: font_spec,
                             style: crate::elements::TextStyle {
                                 color: crate::layout::Color {
                                     r: style.color.0,
@@ -801,24 +814,30 @@ impl DocumentBuilder {
                         let text = element.resolve(&context);
                         let style = element.style.as_ref().unwrap_or(&footer.style);
 
+                        let font_spec = crate::elements::FontSpec {
+                            name: style.font_name.clone(),
+                            size: style.font_size,
+                        };
+
+                        // Calculate width for alignment
+                        let (text_width, _) = layout_engine.text_bounds(&text, &font_spec.name, font_spec.size, page_data.width);
+
                         let x = match element.alignment {
-                            crate::writer::page_template::HFAlignment::Left => template.margin_left,
-                            crate::writer::page_template::HFAlignment::Center => {
-                                page_data.width / 2.0
+                            crate::writer::HFAlignment::Left => template.margin_left,
+                            crate::writer::HFAlignment::Center => {
+                                (page_data.width - text_width) / 2.0
                             },
-                            crate::writer::page_template::HFAlignment::Right => {
-                                page_data.width - template.margin_right
+                            crate::writer::HFAlignment::Right => {
+                                page_data.width - template.margin_right - text_width
                             },
                         };
                         let y = footer.offset;
 
                         page.add_element(&ContentElement::Text(TextContent {
+                            artifact_type: Some(crate::extractors::text::ArtifactType::Pagination(crate::extractors::text::PaginationSubtype::Footer)),
                             text,
-                            bbox: Rect::new(x, y, 0.0, style.font_size),
-                            font: crate::elements::FontSpec {
-                                name: style.font_name.clone(),
-                                size: style.font_size,
-                            },
+                            bbox: Rect::new(x, y, text_width, style.font_size),
+                            font: font_spec,
                             style: crate::elements::TextStyle {
                                 color: crate::layout::Color {
                                     r: style.color.0,
@@ -835,9 +854,6 @@ impl DocumentBuilder {
                     }
                 }
             }
-
-            // 2. Add normal elements
-            page.add_elements(&page_data.elements);
 
             // 3. Add annotations
             for annotation in &page_data.annotations {

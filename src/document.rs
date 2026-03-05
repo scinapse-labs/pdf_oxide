@@ -3036,12 +3036,9 @@ impl PdfDocument {
 
     /// Mark a specific rectangular region on a page for erasure.
     ///
-    /// Content in this region will be excluded from all subsequent text and image extractions.
+    /// Content in this region will be excluded from all subsequent text extractions.
     pub fn erase_region(&mut self, page_index: usize, rect: crate::geometry::Rect) -> Result<()> {
         self.erase_regions.entry(page_index).or_default().push(rect);
-        // Clear caches for this page to force re-extraction with the new filter
-        self.form_xobject_images_cache
-            .remove(&crate::object::ObjectRef::new(page_index as u32, 0));
         Ok(())
     }
 
@@ -3056,6 +3053,11 @@ impl PdfDocument {
     /// Uses spec-compliant /Artifact tags when available (100% accuracy), or
     /// falls back to heuristic analysis of the top 15% of pages.
     pub fn remove_headers(&mut self, threshold: f32) -> Result<usize> {
+        if threshold < 0.0 || threshold > 1.0 {
+            return Err(crate::error::Error::InvalidOperation(
+                "Threshold must be between 0.0 and 1.0".to_string(),
+            ));
+        }
         self.remove_repeated_text(PageArea::Header, threshold)
     }
 
@@ -3064,6 +3066,11 @@ impl PdfDocument {
     /// Uses spec-compliant /Artifact tags when available (100% accuracy), or
     /// falls back to heuristic analysis of the bottom 15% of pages.
     pub fn remove_footers(&mut self, threshold: f32) -> Result<usize> {
+        if threshold < 0.0 || threshold > 1.0 {
+            return Err(crate::error::Error::InvalidOperation(
+                "Threshold must be between 0.0 and 1.0".to_string(),
+            ));
+        }
         self.remove_repeated_text(PageArea::Footer, threshold)
     }
 
@@ -3075,6 +3082,11 @@ impl PdfDocument {
     /// # Arguments
     /// * `threshold` - Fraction of pages (0.0-1.0) where text must repeat to be removed (heuristic mode only).
     pub fn remove_artifacts(&mut self, threshold: f32) -> Result<usize> {
+        if threshold < 0.0 || threshold > 1.0 {
+            return Err(crate::error::Error::InvalidOperation(
+                "Threshold must be between 0.0 and 1.0".to_string(),
+            ));
+        }
         let h = self.remove_headers(threshold)?;
         let f = self.remove_footers(threshold)?;
         Ok(h + f)
@@ -3083,7 +3095,7 @@ impl PdfDocument {
     /// Helper to remove repeated text in a specific page area.
     fn remove_repeated_text(&mut self, area: PageArea, threshold: f32) -> Result<usize> {
         use crate::extractors::text::{ArtifactType, PaginationSubtype};
-        use std::collections::HashMap;
+        use std::collections::{HashMap, HashSet};
 
         let page_count = self.page_count()?;
         if page_count < 1 {
@@ -3132,8 +3144,11 @@ impl PdfDocument {
             return Ok(0);
         }
 
-        let mut occurrences: HashMap<String, Vec<usize>> = HashMap::new();
+        let mut occurrences: HashMap<String, HashSet<usize>> = HashMap::new();
         let min_occurrences = (page_count as f32 * threshold).ceil() as usize;
+
+        // Cache spans per page to avoid redundant extraction in Pass 2
+        let mut page_spans: HashMap<usize, Vec<crate::layout::TextSpan>> = HashMap::new();
 
         for page_idx in 0..page_count {
             let height = self.get_page_media_box(page_idx)?.3;
@@ -3143,7 +3158,7 @@ impl PdfDocument {
             };
 
             let spans = self.extract_spans(page_idx)?;
-            for span in spans {
+            for span in spans.iter() {
                 let is_in_zone = match area {
                     PageArea::Header => span.bbox.y > zone,
                     PageArea::Footer => (span.bbox.y + span.bbox.height) < zone,
@@ -3152,20 +3167,23 @@ impl PdfDocument {
                 if is_in_zone {
                     let text = span.text.trim().to_string();
                     if text.len() > 3 && !text.chars().all(|c| c.is_numeric()) {
-                        occurrences.entry(text).or_default().push(page_idx);
+                        occurrences.entry(text).or_default().insert(page_idx);
                     }
                 }
             }
+            page_spans.insert(page_idx, spans);
         }
 
         for (text, pages) in occurrences {
             if pages.len() >= min_occurrences {
                 for page_idx in pages {
-                    let spans = self.extract_spans(page_idx)?;
-                    for span in spans {
-                        if span.text.trim() == text {
-                            self.erase_region(page_idx, span.bbox)?;
-                            removed_count += 1;
+                    // Reuse cached spans
+                    if let Some(spans) = page_spans.get(&page_idx) {
+                        for span in spans {
+                            if span.text.trim() == text {
+                                self.erase_region(page_idx, span.bbox)?;
+                                removed_count += 1;
+                            }
                         }
                     }
                 }

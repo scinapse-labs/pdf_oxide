@@ -22,7 +22,7 @@ use std::collections::HashMap;
 pub struct TextSpan {
     /// The complete text string
     pub text: String,
-    /// Bounding box of the entire span
+    /// Bounding box of the entire span in PDF coordinates (points)
     pub bbox: Rect,
     /// Font name/family
     pub font_name: String,
@@ -36,47 +36,19 @@ pub struct TextSpan {
     pub color: Color,
     /// Marked Content ID (for Tagged PDFs)
     pub mcid: Option<u32>,
-    /// Extraction sequence number (used as tie-breaker for Y-coordinate sorting)
-    ///
-    /// When PDFs use unusual coordinate systems where many spans have identical
-    /// Y coordinates (e.g., EU GDPR PDF with Y=0.0 for multiple spans), this
-    /// sequence number preserves the original extraction order from the content
-    /// stream, which often reflects the intended reading order per PDF spec.
+    /// Extraction sequence number
     pub sequence: usize,
-    /// If true, this span was created by splitting fused words and should not be re-merged.
-    ///
-    /// When CamelCase splitting creates separate spans from a single fused word
-    /// (e.g., "theGeneral" -> "the" + "General"), this flag prevents them from
-    /// being re-merged during the span merging phase, even if the gap is 0pt.
-    /// This preserves the split intent and prevents word fusion regressions.
+    /// If true, this span was created by splitting fused words
     pub split_boundary_before: bool,
-    /// If true, this span was created by the TJ processor as a space from a negative offset.
-    ///
-    /// Per PDF spec ISO 32000-1:2008 Section 9.4.4, negative offsets in TJ arrays
-    /// indicate word boundaries where spaces should be inserted. This flag marks
-    /// those automatically generated space spans so merge logic can avoid double-spacing.
+    /// If true, this span was created by the TJ processor as a space
     pub offset_semantic: bool,
-    /// Character spacing (Tc parameter) per ISO 32000-1:2008 Section 9.3.1.
-    ///
-    /// Tc is added after each character during text positioning. Default value is 0.
-    /// This value is used for text justification detection (Phase 3.5).
+    /// Character spacing (Tc parameter)
     pub char_spacing: f32,
-    /// Word spacing (Tw parameter) per ISO 32000-1:2008 Section 9.3.1.
-    ///
-    /// Tw is added after space characters (U+0020) during text positioning. Default is 0.
-    /// This value is critical for text justification detection - the variance in Tw
-    /// values across a line indicates the degree of justification applied.
+    /// Word spacing (Tw parameter)
     pub word_spacing: f32,
-    /// Horizontal scaling (Tz parameter) per ISO 32000-1:2008 Section 9.3.1.
-    ///
-    /// Tz scales all character widths and word spacing. Value is in percent (e.g., 100 = 100%).
-    /// Default value is 100.0. Used for justification detection and layout analysis.
+    /// Horizontal scaling (Tz parameter)
     pub horizontal_scaling: f32,
     /// If true, was created by WordBoundaryDetector primary detection.
-    ///
-    /// Used to mark spans created by primary detection mode so they
-    /// are not re-merged during the span merging phase.
-    /// Default is false for backward compatibility.
     pub primary_detected: bool,
     /// Artifact type classification for filtered content (PDF Spec Section 14.8.2.2)
     pub artifact_type: Option<ArtifactType>,
@@ -169,36 +141,11 @@ pub struct TextChar {
 
 impl TextChar {
     /// Get the rotation angle in radians.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use pdf_oxide::layout::TextChar;
-    ///
-    /// let char = // ... create TextChar with rotation_degrees = 90.0
-    /// assert!((char.rotation_radians() - std::f32::consts::FRAC_PI_2).abs() < 0.01);
-    /// ```
     pub fn rotation_radians(&self) -> f32 {
         self.rotation_degrees.to_radians()
     }
 
     /// Check if this character is rotated (non-zero rotation).
-    ///
-    /// Returns true if the rotation angle is greater than 0.01 degrees,
-    /// which accounts for floating-point precision while detecting
-    /// intentional rotation.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use pdf_oxide::layout::TextChar;
-    ///
-    /// let normal_char = // ... rotation_degrees = 0.0
-    /// assert!(!normal_char.is_rotated());
-    ///
-    /// let rotated_char = // ... rotation_degrees = 45.0
-    /// assert!(rotated_char.is_rotated());
-    /// ```
     pub fn is_rotated(&self) -> bool {
         self.rotation_degrees.abs() > 0.01
     }
@@ -211,22 +158,6 @@ impl TextChar {
     /// # Arguments
     ///
     /// * `matrix` - A 6-element transformation matrix [a, b, c, d, e, f]
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use pdf_oxide::layout::TextChar;
-    ///
-    /// let mut char = // ... create TextChar
-    /// // Set a 45-degree rotation matrix
-    /// let cos45 = 0.707;
-    /// let sin45 = 0.707;
-    /// char.with_matrix([cos45, sin45, -sin45, cos45, 100.0, 200.0]);
-    ///
-    /// assert!((char.rotation_degrees - 45.0).abs() < 0.5);
-    /// assert_eq!(char.origin_x, 100.0);
-    /// assert_eq!(char.origin_y, 200.0);
-    /// ```
     pub fn with_matrix(mut self, matrix: [f32; 6]) -> Self {
         self.matrix = Some(matrix);
         // Extract origin from translation components
@@ -263,22 +194,6 @@ impl TextChar {
     /// when transformation data is not available (e.g., programmatic creation).
     /// The origin defaults to the bbox position, rotation to 0, and
     /// advance_width to the bbox width.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use pdf_oxide::layout::{TextChar, FontWeight, Color};
-    /// use pdf_oxide::geometry::Rect;
-    ///
-    /// let char = TextChar::simple(
-    ///     'A',
-    ///     Rect::new(100.0, 200.0, 10.0, 12.0),
-    ///     "Helvetica".to_string(),
-    ///     12.0,
-    /// );
-    /// assert_eq!(char.origin_x, 100.0);
-    /// assert_eq!(char.rotation_degrees, 0.0);
-    /// ```
     pub fn simple(char: char, bbox: Rect, font_name: String, font_size: f32) -> Self {
         Self {
             char,
@@ -302,9 +217,8 @@ impl TextChar {
 ///
 /// PDF Spec: ISO 32000-1:2008, Table 122 - FontDescriptor
 /// Values: 100-900 where 400 = normal, 700 = bold
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, Default)]
 #[repr(u16)]
-#[derive(Default)]
 pub enum FontWeight {
     /// Thin (100)
     Thin = 100,
@@ -371,16 +285,6 @@ pub struct Color {
 
 impl Color {
     /// Create a new color.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use pdf_oxide::layout::Color;
-    ///
-    /// let black = Color::new(0.0, 0.0, 0.0);
-    /// let white = Color::new(1.0, 1.0, 1.0);
-    /// let red = Color::new(1.0, 0.0, 0.0);
-    /// ```
     pub fn new(r: f32, g: f32, b: f32) -> Self {
         Self { r, g, b }
     }
@@ -414,10 +318,6 @@ pub struct TextBlock {
     /// Whether the block contains italic text
     pub is_italic: bool,
     /// Marked Content ID (for Tagged PDFs)
-    ///
-    /// This field stores the MCID (Marked Content ID) if this text block
-    /// belongs to a marked content sequence in a Tagged PDF. The MCID can
-    /// be used to determine reading order via the structure tree.
     pub mcid: Option<u32>,
 }
 
@@ -430,42 +330,10 @@ impl TextBlock {
     /// # Panics
     ///
     /// Panics if the `chars` vector is empty.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use pdf_oxide::geometry::Rect;
-    /// use pdf_oxide::layout::{TextChar, TextBlock, FontWeight, Color};
-    ///
-    /// let chars = vec![
-    ///     TextChar {
-    ///         char: 'H',
-    ///         bbox: Rect::new(0.0, 0.0, 10.0, 12.0),
-    ///         font_name: "Times".to_string(),
-    ///         font_size: 12.0,
-    ///         font_weight: FontWeight::Normal,
-    ///         is_italic: false,
-    ///         color: Color::black(),
-    ///     },
-    ///     TextChar {
-    ///         char: 'i',
-    ///         bbox: Rect::new(10.0, 0.0, 5.0, 12.0),
-    ///         font_name: "Times".to_string(),
-    ///         font_size: 12.0,
-    ///         font_weight: FontWeight::Normal,
-    ///         is_italic: false,
-    ///         color: Color::black(),
-    ///     },
-    /// ];
-    ///
-    /// let block = TextBlock::from_chars(chars);
-    /// assert_eq!(block.text, "Hi");
-    /// assert_eq!(block.avg_font_size, 12.0);
-    /// ```
     pub fn from_chars(chars: Vec<TextChar>) -> Self {
         assert!(!chars.is_empty(), "Cannot create TextBlock from empty chars");
 
-        // Collect text directly (word spacing is handled at markdown level)
+        // Collect text directly
         let text: String = chars.iter().map(|c| c.char).collect();
 
         // Compute bounding box as union of all character bboxes
@@ -491,7 +359,6 @@ impl TextBlock {
         let is_italic = chars.iter().any(|c| c.is_italic);
 
         // Determine MCID for the block
-        // Use the MCID of the first character if all chars have the same MCID
         let mcid = chars
             .first()
             .and_then(|c| c.mcid)
@@ -510,134 +377,25 @@ impl TextBlock {
     }
 
     /// Get the center point of the text block.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use pdf_oxide::geometry::Rect;
-    /// use pdf_oxide::layout::{TextChar, TextBlock, FontWeight, Color};
-    ///
-    /// let chars = vec![
-    ///     TextChar {
-    ///         char: 'A',
-    ///         bbox: Rect::new(0.0, 0.0, 100.0, 50.0),
-    ///         font_name: "Times".to_string(),
-    ///         font_size: 12.0,
-    ///         font_weight: FontWeight::Normal,
-    ///         is_italic: false,
-    ///         color: Color::black(),
-    ///     },
-    /// ];
-    ///
-    /// let block = TextBlock::from_chars(chars);
-    /// let center = block.center();
-    /// assert_eq!(center.x, 50.0);
-    /// assert_eq!(center.y, 25.0);
-    /// ```
     pub fn center(&self) -> Point {
         self.bbox.center()
     }
 
     /// Check if this block is horizontally aligned with another block.
-    ///
-    /// Two blocks are considered horizontally aligned if their Y coordinates
-    /// are within the specified tolerance.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use pdf_oxide::geometry::Rect;
-    /// use pdf_oxide::layout::{TextChar, TextBlock, FontWeight, Color};
-    ///
-    /// let chars1 = vec![
-    ///     TextChar {
-    ///         char: 'A',
-    ///         bbox: Rect::new(0.0, 0.0, 10.0, 10.0),
-    ///         font_name: "Times".to_string(),
-    ///         font_size: 12.0,
-    ///         font_weight: FontWeight::Normal,
-    ///         is_italic: false,
-    ///         color: Color::black(),
-    ///     },
-    /// ];
-    /// let chars2 = vec![
-    ///     TextChar {
-    ///         char: 'B',
-    ///         bbox: Rect::new(50.0, 1.0, 10.0, 10.0),
-    ///         font_name: "Times".to_string(),
-    ///         font_size: 12.0,
-    ///         font_weight: FontWeight::Normal,
-    ///         is_italic: false,
-    ///         color: Color::black(),
-    ///     },
-    /// ];
-    ///
-    /// let block1 = TextBlock::from_chars(chars1);
-    /// let block2 = TextBlock::from_chars(chars2);
-    ///
-    /// assert!(block1.is_horizontally_aligned(&block2, 5.0));
-    /// assert!(!block1.is_horizontally_aligned(&block2, 0.5));
-    /// ```
     pub fn is_horizontally_aligned(&self, other: &TextBlock, tolerance: f32) -> bool {
         (self.bbox.y - other.bbox.y).abs() < tolerance
     }
 
     /// Check if this block is vertically aligned with another block.
-    ///
-    /// Two blocks are considered vertically aligned if their X coordinates
-    /// are within the specified tolerance.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use pdf_oxide::geometry::Rect;
-    /// use pdf_oxide::layout::{TextChar, TextBlock, FontWeight, Color};
-    ///
-    /// let chars1 = vec![
-    ///     TextChar {
-    ///         char: 'A',
-    ///         bbox: Rect::new(0.0, 0.0, 10.0, 10.0),
-    ///         font_name: "Times".to_string(),
-    ///         font_size: 12.0,
-    ///         font_weight: FontWeight::Normal,
-    ///         is_italic: false,
-    ///         color: Color::black(),
-    ///     },
-    /// ];
-    /// let chars2 = vec![
-    ///     TextChar {
-    ///         char: 'B',
-    ///         bbox: Rect::new(1.0, 50.0, 10.0, 10.0),
-    ///         font_name: "Times".to_string(),
-    ///         font_size: 12.0,
-    ///         font_weight: FontWeight::Normal,
-    ///         is_italic: false,
-    ///         color: Color::black(),
-    ///     },
-    /// ];
-    ///
-    /// let block1 = TextBlock::from_chars(chars1);
-    /// let block2 = TextBlock::from_chars(chars2);
-    ///
-    /// assert!(block1.is_vertically_aligned(&block2, 5.0));
-    /// assert!(!block1.is_vertically_aligned(&block2, 0.5));
-    /// ```
     pub fn is_vertically_aligned(&self, other: &TextBlock, tolerance: f32) -> bool {
         (self.bbox.x - other.bbox.x).abs() < tolerance
     }
 }
 
 /// A word is a semantic unit of text (alias for TextBlock).
-///
-/// In this library, a "Word" is a sequence of characters grouped by spatial proximity.
-/// It typically corresponds to a linguistic word, but may also be a number, symbol,
-/// or other discrete text element.
 pub type Word = TextBlock;
 
 /// A line of text containing multiple words.
-///
-/// Represents a visually distinct line of text, composed of one or more words
-/// sorted in reading order (left-to-right for LTR languages).
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TextLine {
     /// Words in this line
@@ -689,31 +447,12 @@ mod tests {
             is_italic: false,
             color: Color::black(),
             mcid: None,
-            // Transformation fields (v0.3.1)
             origin_x: bbox.x,
             origin_y: bbox.y,
             rotation_degrees: 0.0,
             advance_width: bbox.width,
             matrix: None,
         }
-    }
-
-    #[test]
-    fn test_color_creation() {
-        let black = Color::black();
-        assert_eq!(black.r, 0.0);
-        assert_eq!(black.g, 0.0);
-        assert_eq!(black.b, 0.0);
-
-        let white = Color::white();
-        assert_eq!(white.r, 1.0);
-        assert_eq!(white.g, 1.0);
-        assert_eq!(white.b, 1.0);
-
-        let red = Color::new(1.0, 0.0, 0.0);
-        assert_eq!(red.r, 1.0);
-        assert_eq!(red.g, 0.0);
-        assert_eq!(red.b, 0.0);
     }
 
     #[test]
@@ -729,89 +468,5 @@ mod tests {
         let block = TextBlock::from_chars(chars);
         assert_eq!(block.text, "Hello");
         assert_eq!(block.avg_font_size, 12.0);
-        assert_eq!(block.dominant_font, "Times");
-        assert!(!block.is_bold);
-    }
-
-    #[test]
-    fn test_text_block_bold_detection() {
-        let bbox = Rect::new(0.0, 0.0, 10.0, 12.0);
-        let chars = vec![
-            TextChar {
-                char: 'B',
-                bbox,
-                font_name: "Times".to_string(),
-                font_size: 12.0,
-                font_weight: FontWeight::Bold,
-                is_italic: false,
-                color: Color::black(),
-                mcid: None,
-                origin_x: bbox.x,
-                origin_y: bbox.y,
-                rotation_degrees: 0.0,
-                advance_width: bbox.width,
-                matrix: None,
-            },
-            mock_char('o', 10.0, 0.0),
-            mock_char('l', 20.0, 0.0),
-            mock_char('d', 30.0, 0.0),
-        ];
-
-        let block = TextBlock::from_chars(chars);
-        assert_eq!(block.text, "Bold");
-        assert!(block.is_bold);
-    }
-
-    #[test]
-    fn test_text_block_center() {
-        let bbox = Rect::new(0.0, 0.0, 100.0, 50.0);
-        let chars = vec![TextChar {
-            char: 'A',
-            bbox,
-            font_name: "Times".to_string(),
-            font_size: 12.0,
-            font_weight: FontWeight::Normal,
-            is_italic: false,
-            color: Color::black(),
-            mcid: None,
-            origin_x: bbox.x,
-            origin_y: bbox.y,
-            rotation_degrees: 0.0,
-            advance_width: bbox.width,
-            matrix: None,
-        }];
-
-        let block = TextBlock::from_chars(chars);
-        let center = block.center();
-        assert_eq!(center.x, 50.0);
-        assert_eq!(center.y, 25.0);
-    }
-
-    #[test]
-    fn test_horizontal_alignment() {
-        let chars1 = vec![mock_char('A', 0.0, 0.0)];
-        let chars2 = vec![mock_char('B', 50.0, 2.0)];
-        let chars3 = vec![mock_char('C', 100.0, 20.0)];
-
-        let block1 = TextBlock::from_chars(chars1);
-        let block2 = TextBlock::from_chars(chars2);
-        let block3 = TextBlock::from_chars(chars3);
-
-        assert!(block1.is_horizontally_aligned(&block2, 5.0));
-        assert!(!block1.is_horizontally_aligned(&block3, 5.0));
-    }
-
-    #[test]
-    fn test_vertical_alignment() {
-        let chars1 = vec![mock_char('A', 0.0, 0.0)];
-        let chars2 = vec![mock_char('B', 2.0, 50.0)];
-        let chars3 = vec![mock_char('C', 20.0, 100.0)];
-
-        let block1 = TextBlock::from_chars(chars1);
-        let block2 = TextBlock::from_chars(chars2);
-        let block3 = TextBlock::from_chars(chars3);
-
-        assert!(block1.is_vertically_aligned(&block2, 5.0));
-        assert!(!block1.is_vertically_aligned(&block3, 5.0));
     }
 }

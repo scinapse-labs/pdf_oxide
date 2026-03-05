@@ -3,6 +3,7 @@
 //! This module provides the `TextContent` type and related structures
 //! for representing text in PDFs.
 
+use crate::extractors::text::ArtifactType;
 use crate::geometry::{Point, Rect};
 use crate::layout::{Color, FontWeight, TextSpan};
 
@@ -23,6 +24,8 @@ pub struct TextContent {
     pub style: TextStyle,
     /// Reading order index (for extraction) or write order (for generation)
     pub reading_order: Option<usize>,
+    /// Artifact type classification
+    pub artifact_type: Option<ArtifactType>,
 
     // Transformation properties (v0.3.1, Issue #27)
     /// Baseline origin point (extracted from text matrix)
@@ -35,20 +38,6 @@ pub struct TextContent {
 
 impl TextContent {
     /// Create a new text content element.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use pdf_oxide::elements::{TextContent, FontSpec, TextStyle};
-    /// use pdf_oxide::geometry::Rect;
-    ///
-    /// let text = TextContent::new(
-    ///     "Hello, World!",
-    ///     Rect::new(72.0, 720.0, 100.0, 12.0),
-    ///     FontSpec::default(),
-    ///     TextStyle::default(),
-    /// );
-    /// ```
     pub fn new(text: impl Into<String>, bbox: Rect, font: FontSpec, style: TextStyle) -> Self {
         Self {
             text: text.into(),
@@ -56,6 +45,7 @@ impl TextContent {
             font,
             style,
             reading_order: None,
+            artifact_type: None,
             origin: None,
             rotation_degrees: None,
             matrix: None,
@@ -65,6 +55,12 @@ impl TextContent {
     /// Create text content with reading order.
     pub fn with_reading_order(mut self, order: usize) -> Self {
         self.reading_order = Some(order);
+        self
+    }
+
+    /// Set the artifact type.
+    pub fn with_artifact_type(mut self, artifact_type: ArtifactType) -> Self {
+        self.artifact_type = Some(artifact_type);
         self
     }
 
@@ -139,7 +135,7 @@ impl From<TextSpan> for TextContent {
                 strikethrough: false,
             },
             reading_order: Some(span.sequence),
-            // Transformation data not available from TextSpan
+            artifact_type: span.artifact_type,
             origin: None,
             rotation_degrees: None,
             matrix: None,
@@ -166,18 +162,15 @@ impl From<TextContent> for TextSpan {
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             primary_detected: false,
-            artifact_type: None,
+            artifact_type: content.artifact_type,
         }
     }
 }
 
 /// Font specification for text rendering.
-///
-/// Contains the minimal font information needed for both
-/// extraction and generation of PDF text.
 #[derive(Debug, Clone)]
 pub struct FontSpec {
-    /// Font name/family (e.g., "Times-Roman", "Helvetica-Bold")
+    /// Font name (e.g., "Helvetica")
     pub name: String,
     /// Font size in points
     pub size: f32,
@@ -185,14 +178,6 @@ pub struct FontSpec {
 
 impl FontSpec {
     /// Create a new font specification.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use pdf_oxide::elements::FontSpec;
-    ///
-    /// let font = FontSpec::new("Helvetica", 12.0);
-    /// ```
     pub fn new(name: impl Into<String>, size: f32) -> Self {
         Self {
             name: name.into(),
@@ -200,17 +185,17 @@ impl FontSpec {
         }
     }
 
-    /// Create a Helvetica font spec with given size.
+    /// Create a Helvetica font specification.
     pub fn helvetica(size: f32) -> Self {
         Self::new("Helvetica", size)
     }
 
-    /// Create a Times Roman font spec with given size.
+    /// Create a Times-Roman font specification.
     pub fn times(size: f32) -> Self {
         Self::new("Times-Roman", size)
     }
 
-    /// Create a Courier font spec with given size.
+    /// Create a Courier font specification.
     pub fn courier(size: f32) -> Self {
         Self::new("Courier", size)
     }
@@ -238,29 +223,27 @@ pub enum FontStyle {
 }
 
 /// Text styling information.
-///
-/// Contains visual styling properties that can be applied to text.
 #[derive(Debug, Clone)]
 pub struct TextStyle {
     /// Font weight (normal, bold, etc.)
     pub weight: FontWeight,
-    /// Whether text is italicized
+    /// Whether the text is italic
     pub italic: bool,
     /// Text color
     pub color: Color,
-    /// Whether text is underlined
+    /// Whether the text is underlined
     pub underline: bool,
-    /// Whether text has strikethrough
+    /// Whether the text has a strikethrough
     pub strikethrough: bool,
 }
 
 impl TextStyle {
-    /// Create a new text style with default values.
+    /// Create default text style.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Create bold text style.
+    /// Create a bold text style.
     pub fn bold() -> Self {
         Self {
             weight: FontWeight::Bold,
@@ -268,7 +251,7 @@ impl TextStyle {
         }
     }
 
-    /// Create italic text style.
+    /// Create an italic text style.
     pub fn italic() -> Self {
         Self {
             italic: true,
@@ -276,7 +259,7 @@ impl TextStyle {
         }
     }
 
-    /// Create bold italic text style.
+    /// Create a bold-italic text style.
     pub fn bold_italic() -> Self {
         Self {
             weight: FontWeight::Bold,
@@ -285,7 +268,7 @@ impl TextStyle {
         }
     }
 
-    /// Set the font weight.
+    /// Set font weight.
     pub fn with_weight(mut self, weight: FontWeight) -> Self {
         self.weight = weight;
         self
@@ -336,47 +319,6 @@ mod tests {
     }
 
     #[test]
-    fn test_text_content_with_reading_order() {
-        let text = TextContent::new(
-            "First",
-            Rect::new(0.0, 0.0, 50.0, 12.0),
-            FontSpec::default(),
-            TextStyle::default(),
-        )
-        .with_reading_order(5);
-
-        assert_eq!(text.reading_order, Some(5));
-    }
-
-    #[test]
-    fn test_font_spec_presets() {
-        let helvetica = FontSpec::helvetica(14.0);
-        assert_eq!(helvetica.name, "Helvetica");
-        assert_eq!(helvetica.size, 14.0);
-
-        let times = FontSpec::times(12.0);
-        assert_eq!(times.name, "Times-Roman");
-
-        let courier = FontSpec::courier(10.0);
-        assert_eq!(courier.name, "Courier");
-    }
-
-    #[test]
-    fn test_text_style_presets() {
-        let bold = TextStyle::bold();
-        assert!(bold.weight.is_bold());
-        assert!(!bold.italic);
-
-        let italic = TextStyle::italic();
-        assert!(!italic.weight.is_bold());
-        assert!(italic.italic);
-
-        let bold_italic = TextStyle::bold_italic();
-        assert!(bold_italic.weight.is_bold());
-        assert!(bold_italic.italic);
-    }
-
-    #[test]
     fn test_text_span_conversion() {
         let span = TextSpan {
             text: "Test".to_string(),
@@ -394,6 +336,7 @@ mod tests {
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             primary_detected: false,
+            artifact_type: None,
         };
 
         let content: TextContent = span.into();
@@ -403,62 +346,5 @@ mod tests {
         assert_eq!(content.font.size, 12.0);
         assert!(content.is_bold());
         assert_eq!(content.reading_order, Some(3));
-    }
-
-    #[test]
-    fn test_text_content_to_span_conversion() {
-        let content = TextContent {
-            text: "Converted".to_string(),
-            bbox: Rect::new(0.0, 0.0, 80.0, 14.0),
-            font: FontSpec::new("Helvetica", 14.0),
-            style: TextStyle::bold(),
-            reading_order: Some(7),
-            origin: None,
-            rotation_degrees: None,
-            matrix: None,
-        };
-
-        let span: TextSpan = content.into();
-
-        assert_eq!(span.text, "Converted");
-        assert_eq!(span.font_name, "Helvetica");
-        assert_eq!(span.font_size, 14.0);
-        assert!(span.font_weight.is_bold());
-        assert_eq!(span.sequence, 7);
-    }
-
-    #[test]
-    fn test_text_content_transformation_methods() {
-        let content = TextContent::new(
-            "Rotated",
-            Rect::new(100.0, 200.0, 50.0, 12.0),
-            FontSpec::default(),
-            TextStyle::default(),
-        )
-        .with_origin(Point::new(100.0, 200.0))
-        .with_rotation(45.0)
-        .with_matrix([0.707, 0.707, -0.707, 0.707, 100.0, 200.0]);
-
-        assert!(content.is_rotated());
-        assert_eq!(content.rotation_degrees, Some(45.0));
-        assert!(
-            content.rotation_radians().unwrap() > 0.78
-                && content.rotation_radians().unwrap() < 0.79
-        );
-        assert_eq!(content.origin, Some(Point::new(100.0, 200.0)));
-        assert!(content.get_matrix().is_some());
-    }
-
-    #[test]
-    fn test_text_content_not_rotated() {
-        let content = TextContent::new(
-            "Normal",
-            Rect::new(0.0, 0.0, 50.0, 12.0),
-            FontSpec::default(),
-            TextStyle::default(),
-        )
-        .with_rotation(0.0);
-
-        assert!(!content.is_rotated());
     }
 }

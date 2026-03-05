@@ -1,4 +1,4 @@
-# PDF Oxide - The Fastest PDF Toolkit for Python, Rust, CLI & AI
+# PDF Oxide - The Fastest PDF Toolkit for Python, Rust, WASM, CLI & AI
 
 The fastest PDF library for text extraction, image extraction, and markdown conversion. Rust core with Python bindings, WASM support, CLI tool, and MCP server for AI assistants. 0.8ms mean per document, 5× faster than PyMuPDF, 15× faster than pypdf. 100% pass rate on 3,830 real-world PDFs. MIT licensed.
 
