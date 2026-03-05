@@ -222,6 +222,8 @@ pub struct PdfConfig {
     pub font_size: f32,
     /// Line height multiplier
     pub line_height: f32,
+    /// Page template for headers/footers
+    pub template: Option<crate::writer::PageTemplate>,
 }
 
 impl Default for PdfConfig {
@@ -238,6 +240,7 @@ impl Default for PdfConfig {
             margin_bottom: 72.0, // 1 inch
             font_size: 12.0,
             line_height: 1.5,
+            template: None,
         }
     }
 }
@@ -2396,6 +2399,12 @@ impl PdfBuilder {
         self
     }
 
+    /// Set the page template for headers and footers.
+    pub fn template(mut self, template: crate::writer::PageTemplate) -> Self {
+        self.config.template = Some(template);
+        self
+    }
+
     /// Set the document keywords.
     pub fn keywords(mut self, keywords: impl Into<String>) -> Self {
         self.config.keywords = Some(keywords.into());
@@ -2696,6 +2705,10 @@ impl PdfBuilder {
         }
         builder = builder.metadata(metadata);
 
+        if let Some(ref template) = self.config.template {
+            builder = builder.template(template.clone());
+        }
+
         // Parse and render Markdown
         let (_page_width, page_height) = self.config.page_size.dimensions();
         let start_y = page_height - self.config.margin_top;
@@ -2800,8 +2813,16 @@ impl PdfBuilder {
         // Render all items
         {
             let mut page = builder.page(self.config.page_size);
+            let mut last_y = f32::MAX;
+
             for (x, y, text) in text_items {
+                // If y increased, we hit a page break in the collection loop
+                if y > last_y {
+                    page.done();
+                    page = builder.page(self.config.page_size);
+                }
                 page = page.at(x, y).text(&text);
+                last_y = y;
             }
             page.done();
         }
@@ -2882,6 +2903,10 @@ impl PdfBuilder {
         }
         builder = builder.metadata(metadata);
 
+        if let Some(ref template) = self.config.template {
+            builder = builder.template(template.clone());
+        }
+
         // Render text
         let (_page_width, page_height) = self.config.page_size.dimensions();
         let start_y = page_height - self.config.margin_top;
@@ -2903,11 +2928,18 @@ impl PdfBuilder {
             }
         }
 
-        // Now render all items on a single page
+        // Now render all items
         {
             let mut page = builder.page(self.config.page_size);
+            let mut last_y = f32::MAX;
+
             for (x, y, text) in text_items {
+                if y > last_y {
+                    page.done();
+                    page = builder.page(self.config.page_size);
+                }
                 page = page.at(x, y).text(&text);
+                last_y = y;
             }
             page.done();
         }

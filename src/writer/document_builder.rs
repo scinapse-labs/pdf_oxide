@@ -25,6 +25,7 @@
 use super::annotation_builder::{Annotation, LinkAnnotation};
 use super::font_manager::TextLayout;
 use super::freetext::FreeTextAnnotation;
+use super::page_template::PageTemplate;
 use super::pdf_writer::{PdfWriter, PdfWriterConfig};
 use super::stamp::{StampAnnotation, StampType};
 use super::text_annotations::TextAnnotation;
@@ -669,6 +670,7 @@ struct PageData {
 pub struct DocumentBuilder {
     metadata: DocumentMetadata,
     pages: Vec<PageData>,
+    template: Option<PageTemplate>,
 }
 
 impl DocumentBuilder {
@@ -677,12 +679,19 @@ impl DocumentBuilder {
         Self {
             metadata: DocumentMetadata::default(),
             pages: Vec::new(),
+            template: None,
         }
     }
 
     /// Set document metadata.
     pub fn metadata(mut self, metadata: DocumentMetadata) -> Self {
         self.metadata = metadata;
+        self
+    }
+
+    /// Set the page template for headers and footers.
+    pub fn template(mut self, template: PageTemplate) -> Self {
+        self.template = Some(template);
         self
     }
 
@@ -721,24 +730,99 @@ impl DocumentBuilder {
     /// Build the PDF document and return the bytes.
     pub fn build(self) -> Result<Vec<u8>> {
         let mut config = PdfWriterConfig::default();
-        if let Some(version) = self.metadata.version {
+        if let Some(version) = self.metadata.version.clone() {
             config.version = version;
         }
-        config.title = self.metadata.title;
-        config.author = self.metadata.author;
-        config.subject = self.metadata.subject;
-        config.keywords = self.metadata.keywords;
+        config.title = self.metadata.title.clone();
+        config.author = self.metadata.author.clone();
+        config.subject = self.metadata.subject.clone();
+        config.keywords = self.metadata.keywords.clone();
         if self.metadata.creator.is_some() {
-            config.creator = self.metadata.creator;
+            config.creator = self.metadata.creator.clone();
         }
 
         let mut writer = PdfWriter::with_config(config);
+        let total_pages = self.pages.len();
 
-        for page_data in &self.pages {
+        for (idx, page_data) in self.pages.iter().enumerate() {
             let mut page = writer.add_page(page_data.width, page_data.height);
+            
+            // 1. Apply Template (Headers/Footers)
+            if let Some(ref template) = self.template {
+                let page_number = idx + 1;
+                let context = crate::writer::page_template::PlaceholderContext::new(page_number, total_pages)
+                    .with_title(self.metadata.title.clone().unwrap_or_default())
+                    .with_author(self.metadata.author.clone().unwrap_or_default());
+
+                // Apply Header
+                if let Some(header) = template.get_header(page_number) {
+                    for element in header.elements() {
+                        let text = element.resolve(&context);
+                        let style = element.style.as_ref().unwrap_or(&header.style);
+                        
+                        let x = match element.alignment {
+                            crate::writer::page_template::HFAlignment::Left => template.margin_left,
+                            crate::writer::page_template::HFAlignment::Center => page_data.width / 2.0,
+                            crate::writer::page_template::HFAlignment::Right => page_data.width - template.margin_right,
+                        };
+                        let y = page_data.height - header.offset;
+                        
+                        page.add_element(&ContentElement::Text(TextContent {
+                            text,
+                            bbox: Rect::new(x, y, 0.0, style.font_size),
+                            font: crate::elements::FontSpec {
+                                name: style.font_name.clone(),
+                                size: style.font_size,
+                            },
+                            style: crate::elements::TextStyle {
+                                color: crate::layout::Color { r: style.color.0, g: style.color.1, b: style.color.2 },
+                                ..Default::default()
+                            },
+                            reading_order: None,
+                            origin: None,
+                            rotation_degrees: None,
+                            matrix: None,
+                        }));
+                    }
+                }
+
+                // Apply Footer
+                if let Some(footer) = template.get_footer(page_number) {
+                    for element in footer.elements() {
+                        let text = element.resolve(&context);
+                        let style = element.style.as_ref().unwrap_or(&footer.style);
+                        
+                        let x = match element.alignment {
+                            crate::writer::page_template::HFAlignment::Left => template.margin_left,
+                            crate::writer::page_template::HFAlignment::Center => page_data.width / 2.0,
+                            crate::writer::page_template::HFAlignment::Right => page_data.width - template.margin_right,
+                        };
+                        let y = footer.offset;
+                        
+                        page.add_element(&ContentElement::Text(TextContent {
+                            text,
+                            bbox: Rect::new(x, y, 0.0, style.font_size),
+                            font: crate::elements::FontSpec {
+                                name: style.font_name.clone(),
+                                size: style.font_size,
+                            },
+                            style: crate::elements::TextStyle {
+                                color: crate::layout::Color { r: style.color.0, g: style.color.1, b: style.color.2 },
+                                ..Default::default()
+                            },
+                            reading_order: None,
+                            origin: None,
+                            rotation_degrees: None,
+                            matrix: None,
+                        }));
+                    }
+                }
+            }
+
+            // 2. Add normal elements
             page.add_elements(&page_data.elements);
 
-            // Add annotations to the page
+            // 3. Add annotations
             for annotation in &page_data.annotations {
                 page.add_annotation(annotation.clone());
             }

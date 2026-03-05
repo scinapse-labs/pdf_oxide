@@ -56,6 +56,10 @@ from .pdf_oxide import (
     Pdf,
     PdfDocument,
     RadialGradient,
+    # Page Templates
+    HFStyle,
+    HeaderFooter,
+    PageTemplate,
     # Extraction
     TextSpan,
     # OCR (always available as stub if feature is off)
@@ -80,6 +84,10 @@ __all__ = [
     "LineCap",
     "LineJoin",
     "PatternPresets",
+    # Page Templates
+    "HFStyle",
+    "HeaderFooter",
+    "PageTemplate",
     # Extraction
     "TextSpan",
     # OCR

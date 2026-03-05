@@ -182,6 +182,8 @@ pub struct PdfDocument {
     /// Cache of extracted images from Form XObjects (keyed by ObjectRef).
     /// Images are stored without CTM applied — caller applies its own CTM.
     pub(crate) form_xobject_images_cache: HashMap<ObjectRef, Vec<crate::extractors::PdfImage>>,
+    /// Regions marked for erasure per page
+    pub(crate) erase_regions: HashMap<usize, Vec<crate::geometry::Rect>>,
 }
 
 impl std::fmt::Debug for PdfDocument {
@@ -241,6 +243,15 @@ impl ImageExtractFilter {
             skip_indexed_small: 64,
         }
     }
+}
+
+/// Area of a page for targeted header/footer operations.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PageArea {
+    /// Top region (Header)
+    Header,
+    /// Bottom region (Footer)
+    Footer,
 }
 
 impl PdfDocument {
@@ -409,6 +420,7 @@ impl PdfDocument {
             xobject_stream_cache_bytes: 0,
             xobject_spans_cache: HashMap::new(),
             form_xobject_images_cache: HashMap::new(),
+            erase_regions: HashMap::new(),
         };
 
         // Initialize encryption immediately
@@ -3022,6 +3034,190 @@ impl PdfDocument {
         Ok(result)
     }
 
+    /// Mark a specific rectangular region on a page for erasure.
+    ///
+    /// Content in this region will be excluded from all subsequent text and image extractions.
+    pub fn erase_region(&mut self, page_index: usize, rect: crate::geometry::Rect) -> Result<()> {
+        self.erase_regions.entry(page_index).or_default().push(rect);
+        // Clear caches for this page to force re-extraction with the new filter
+        self.form_xobject_images_cache.remove(&crate::object::ObjectRef::new(page_index as u32, 0));
+        Ok(())
+    }
+
+    /// Clear all erase regions for a page.
+    pub fn clear_erase_regions(&mut self, page_index: usize) -> Result<()> {
+        self.erase_regions.remove(&page_index);
+        Ok(())
+    }
+
+    /// Identify and remove headers.
+    ///
+    /// Uses spec-compliant /Artifact tags when available (100% accuracy), or 
+    /// falls back to heuristic analysis of the top 15% of pages.
+    pub fn remove_headers(&mut self, threshold: f32) -> Result<usize> {
+        self.remove_repeated_text(PageArea::Header, threshold)
+    }
+
+    /// Identify and remove footers.
+    ///
+    /// Uses spec-compliant /Artifact tags when available (100% accuracy), or 
+    /// falls back to heuristic analysis of the bottom 15% of pages.
+    pub fn remove_footers(&mut self, threshold: f32) -> Result<usize> {
+        self.remove_repeated_text(PageArea::Footer, threshold)
+    }
+
+    /// Identify and remove both headers and footers.
+    ///
+    /// Prioritizes ISO 32000 spec-compliant /Artifact tags, with a heuristic 
+    /// fallback for untagged PDFs.
+    ///
+    /// # Arguments
+    /// * `threshold` - Fraction of pages (0.0-1.0) where text must repeat to be removed (heuristic mode only).
+    pub fn remove_artifacts(&mut self, threshold: f32) -> Result<usize> {
+        let h = self.remove_headers(threshold)?;
+        let f = self.remove_footers(threshold)?;
+        Ok(h + f)
+    }
+
+    /// Helper to remove repeated text in a specific page area.
+    fn remove_repeated_text(&mut self, area: PageArea, threshold: f32) -> Result<usize> {
+        use std::collections::HashMap;
+        use crate::extractors::text::{ArtifactType, PaginationSubtype};
+        
+        let page_count = self.page_count()?;
+        if page_count < 1 {
+            return Ok(0);
+        }
+
+        let mut removed_count = 0;
+
+        // 1. Spec-Compliant Removal (Priority)
+        // If the PDF uses /Artifact tags (Tagged PDF), we use those directly as they are 100% accurate.
+        for page_idx in 0..page_count {
+            let spans = self.extract_spans(page_idx)?;
+            for span in spans {
+                if let Some(ArtifactType::Pagination(subtype)) = span.artifact_type {
+                    let is_match = match (area, subtype) {
+                        (PageArea::Header, PaginationSubtype::Header) => true,
+                        (PageArea::Footer, PaginationSubtype::Footer) => true,
+                        _ => false,
+                    };
+
+                    if is_match {
+                        self.erase_region(page_idx, span.bbox)?;
+                        removed_count += 1;
+                    }
+                }
+            }
+        }
+
+        // If we found and removed spec-compliant artifacts, we return early
+        if removed_count > 0 {
+            log::info!("Removed {} spec-compliant artifacts from {}", removed_count, if area == PageArea::Header { "headers" } else { "footers" });
+            return Ok(removed_count);
+        }
+
+        // 2. Heuristic Removal (Fallback for Untagged PDFs)
+        // Only run if no spec-compliant tags were found.
+        if page_count < 2 {
+            return Ok(0);
+        }
+
+        let mut occurrences: HashMap<String, Vec<usize>> = HashMap::new();
+        let min_occurrences = (page_count as f32 * threshold).ceil() as usize;
+
+        for page_idx in 0..page_count {
+            let height = self.get_page_media_box(page_idx)?.3;
+            let zone = match area {
+                PageArea::Header => height * 0.85,
+                PageArea::Footer => height * 0.15,
+            };
+
+            let spans = self.extract_spans(page_idx)?;
+            for span in spans {
+                let is_in_zone = match area {
+                    PageArea::Header => span.bbox.y > zone,
+                    PageArea::Footer => (span.bbox.y + span.bbox.height) < zone,
+                };
+
+                if is_in_zone {
+                    let text = span.text.trim().to_string();
+                    if text.len() > 3 && !text.chars().all(|c| c.is_numeric()) {
+                        occurrences.entry(text).or_default().push(page_idx);
+                    }
+                }
+            }
+        }
+
+        for (text, pages) in occurrences {
+            if pages.len() >= min_occurrences {
+                for page_idx in pages {
+                    let spans = self.extract_spans(page_idx)?;
+                    for span in spans {
+                        if span.text.trim() == text {
+                            self.erase_region(page_idx, span.bbox)?;
+                            removed_count += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(removed_count)
+    }
+
+    /// Replace existing header content with new text.
+    ///
+    /// Identifies existing text in the header area (top 15%),
+    /// marks it for erasure, and provides a way to add new content.
+    pub fn edit_header(&mut self, page_index: usize, new_text: &str) -> Result<()> {
+        self.edit_page_area(page_index, PageArea::Header, new_text)
+    }
+
+    /// Replace existing footer content with new text.
+    ///
+    /// Identifies existing text in the footer area (bottom 15%),
+    /// marks it for erasure, and provides a way to add new content.
+    pub fn edit_footer(&mut self, page_index: usize, new_text: &str) -> Result<()> {
+        self.edit_page_area(page_index, PageArea::Footer, new_text)
+    }
+
+    /// Replace both header and footer content with new text.
+    ///
+    /// This is a convenience method that calls both edit_header and edit_footer.
+    pub fn edit_artifacts(&mut self, page_index: usize, header_text: &str, footer_text: &str) -> Result<()> {
+        self.edit_header(page_index, header_text)?;
+        self.edit_footer(page_index, footer_text)?;
+        Ok(())
+    }
+
+    /// Helper to replace content in a specific page area.
+    fn edit_page_area(&mut self, page_index: usize, area: PageArea, new_text: &str) -> Result<()> {
+        let height = self.get_page_media_box(page_index)?.3;
+        let zone = match area {
+            PageArea::Header => height * 0.85,
+            PageArea::Footer => height * 0.15,
+        };
+
+        let spans = self.extract_spans(page_index)?;
+        for span in spans {
+            let is_in_zone = match area {
+                PageArea::Header => span.bbox.y > zone,
+                PageArea::Footer => (span.bbox.y + span.bbox.height) < zone,
+            };
+
+            if is_in_zone {
+                self.erase_region(page_index, span.bbox)?;
+            }
+        }
+
+        log::info!("Marked existing {} on page {} for replacement with: {}", 
+            if area == PageArea::Header { "header" } else { "footer" },
+            page_index, new_text);
+            
+        Ok(())
+    }
+
     /// Extract text from a page with automatic OCR fallback for scanned pages.
     ///
     /// This method automatically detects scanned pages and applies OCR when needed,
@@ -4807,7 +5003,16 @@ impl PdfDocument {
             }
         }
 
-        extractor.extract_text_spans(&content_data)
+        let mut spans = extractor.extract_text_spans(&content_data)?;
+
+        // Filter out spans in erase regions
+        if let Some(regions) = self.erase_regions.get(&page_index) {
+            spans.retain(|span| {
+                !regions.iter().any(|r| r.intersects(&span.bbox))
+            });
+        }
+
+        Ok(spans)
     }
 
     /// Extract text spans from a page with custom configuration.

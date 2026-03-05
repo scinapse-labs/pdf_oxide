@@ -187,6 +187,88 @@ impl PyPdfDocument {
         }
     }
 
+    /// Identify and remove headers.
+    ///
+    /// Uses spec-compliant /Artifact tags when available (100% accuracy), or 
+    /// falls back to heuristic analysis of the top 15% of pages.
+    ///
+    /// Args:
+    ///     threshold (float, optional): Fraction of pages (0.0-1.0) where text must repeat (heuristic mode).
+    #[pyo3(signature = (threshold=0.8))]
+    fn remove_headers(&mut self, threshold: f32) -> PyResult<usize> {
+        self.inner
+            .remove_headers(threshold)
+            .map_err(|e| PyRuntimeError::new_err(format!("Header removal failed: {}", e)))
+    }
+
+    /// Identify and remove footers.
+    ///
+    /// Uses spec-compliant /Artifact tags when available (100% accuracy), or 
+    /// falls back to heuristic analysis of the bottom 15% of pages.
+    ///
+    /// Args:
+    ///     threshold (float, optional): Fraction of pages (0.0-1.0) where text must repeat (heuristic mode).
+    #[pyo3(signature = (threshold=0.8))]
+    fn remove_footers(&mut self, threshold: f32) -> PyResult<usize> {
+        self.inner
+            .remove_footers(threshold)
+            .map_err(|e| PyRuntimeError::new_err(format!("Footer removal failed: {}", e)))
+    }
+
+    /// Identify and remove both headers and footers.
+    ///
+    /// Prioritizes ISO 32000 spec-compliant /Artifact tags, with a heuristic 
+    /// fallback for untagged PDFs.
+    ///
+    /// Args:
+    ///     threshold (float, optional): Fraction of pages (0.0-1.0) where text must repeat (heuristic mode).
+    #[pyo3(signature = (threshold=0.8))]
+    fn remove_artifacts(&mut self, threshold: f32) -> PyResult<usize> {
+        self.inner
+            .remove_artifacts(threshold)
+            .map_err(|e| PyRuntimeError::new_err(format!("Artifact removal failed: {}", e)))
+    }
+
+    /// Replace existing header content with new text.
+    ///
+    /// Identifies existing text in the header area (top 15%),
+    /// marks it for erasure, and provides a way to add new content.
+    ///
+    /// Args:
+    ///     page (int): Page index (0-based)
+    ///     new_text (str): Replacement text
+    fn edit_header(&mut self, page: usize, new_text: &str) -> PyResult<()> {
+        self.inner
+            .edit_header(page, new_text)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to edit header: {}", e)))
+    }
+
+    /// Replace existing footer content with new text.
+    ///
+    /// Identifies existing text in the footer area (bottom 15%),
+    /// marks it for erasure, and provides a way to add new content.
+    ///
+    /// Args:
+    ///     page (int): Page index (0-based)
+    ///     new_text (str): Replacement text
+    fn edit_footer(&mut self, page: usize, new_text: &str) -> PyResult<()> {
+        self.inner
+            .edit_footer(page, new_text)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to edit footer: {}", e)))
+    }
+
+    /// Replace both header and footer content with new text.
+    ///
+    /// Args:
+    ///     page (int): Page index (0-based)
+    ///     header_text (str): Replacement header text
+    ///     footer_text (str): Replacement footer text
+    fn edit_artifacts(&mut self, page: usize, header_text: &str, footer_text: &str) -> PyResult<()> {
+        self.inner
+            .edit_artifacts(page, header_text, footer_text)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to edit artifacts: {}", e)))
+    }
+
     /// Focus extraction on a specific rectangular region of a page (v0.3.14).
     ///
     /// Args:
@@ -1174,6 +1256,10 @@ impl PyPdfDocument {
         urx: f32,
         ury: f32,
     ) -> PyResult<()> {
+        // Mark in inner document for extraction filtering
+        let rect = crate::geometry::Rect::new(llx, lly, urx - llx, ury - lly);
+        self.inner.erase_region(page, rect).map_err(|e| PyRuntimeError::new_err(format!("Failed to mark region: {}", e)))?;
+
         if self.editor.is_none() {
             let editor = RustDocumentEditor::open(&self.path)
                 .map_err(|e| PyRuntimeError::new_err(format!("Failed to open editor: {}", e)))?;
@@ -1198,6 +1284,11 @@ impl PyPdfDocument {
     ///     >>> doc.erase_regions(0, [(72, 700, 200, 792), (300, 300, 500, 400)])
     ///     >>> doc.save("output.pdf")
     fn erase_regions(&mut self, page: usize, rects: Vec<(f32, f32, f32, f32)>) -> PyResult<()> {
+        for (llx, lly, urx, ury) in &rects {
+            let rect = crate::geometry::Rect::new(*llx, *lly, *urx - *llx, *ury - *lly);
+            self.inner.erase_region(page, rect).map_err(|e| PyRuntimeError::new_err(format!("Failed to mark region: {}", e)))?;
+        }
+
         if self.editor.is_none() {
             let editor = RustDocumentEditor::open(&self.path)
                 .map_err(|e| PyRuntimeError::new_err(format!("Failed to open editor: {}", e)))?;
@@ -1220,10 +1311,12 @@ impl PyPdfDocument {
     ///
     /// Args:
     ///     page (int): Page index (0-based)
-    fn clear_erase_regions(&mut self, page: usize) {
+    fn clear_erase_regions(&mut self, page: usize) -> PyResult<()> {
+        self.inner.clear_erase_regions(page).map_err(|e| PyRuntimeError::new_err(format!("Failed to clear regions: {}", e)))?;
         if let Some(ref mut editor) = self.editor {
             editor.clear_erase_regions(page);
         }
+        Ok(())
     }
 
     // ========================================================================
@@ -2811,6 +2904,32 @@ impl PyPdf {
 
         let pdf = builder
             .from_text(content)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create PDF: {}", e)))?;
+
+        Ok(PyPdf {
+            bytes: pdf.into_bytes(),
+        })
+    }
+
+    /// Create a PDF from Markdown content with a template.
+    #[staticmethod]
+    #[pyo3(signature = (content, template, title=None, author=None))]
+    fn from_markdown_with_template(
+        content: &str,
+        template: &PyPageTemplate,
+        title: Option<&str>,
+        author: Option<&str>,
+    ) -> PyResult<Self> {
+        let mut builder = RustPdfBuilder::new().template(template.inner.clone());
+        if let Some(t) = title {
+            builder = builder.title(t);
+        }
+        if let Some(a) = author {
+            builder = builder.author(a);
+        }
+
+        let pdf = builder
+            .from_markdown(content)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create PDF: {}", e)))?;
 
         Ok(PyPdf {
@@ -5126,6 +5245,159 @@ impl PyPatternPresets {
     }
 }
 
+/// Style configuration for header/footer text.
+#[pyclass(name = "HFStyle")]
+#[derive(Clone)]
+pub struct PyHFStyle {
+    pub inner: crate::writer::HFStyle,
+}
+
+#[pymethods]
+impl PyHFStyle {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: crate::writer::HFStyle::default(),
+        }
+    }
+
+    /// Set the font and size.
+    fn font(mut slf: PyRefMut<'_, Self>, name: &str, size: f32) -> PyResult<()> {
+        slf.inner = slf.inner.clone().font(name, size);
+        Ok(())
+    }
+
+    /// Set bold weight.
+    fn bold(mut slf: PyRefMut<'_, Self>) -> PyResult<()> {
+        slf.inner = slf.inner.clone().bold();
+        Ok(())
+    }
+
+    /// Set text color (RGB, 0.0-1.0).
+    fn color(mut slf: PyRefMut<'_, Self>, r: f32, g: f32, b: f32) -> PyResult<()> {
+        slf.inner = slf.inner.clone().color(r, g, b);
+        Ok(())
+    }
+}
+
+/// A header or footer definition.
+#[pyclass(name = "HeaderFooter")]
+#[derive(Clone)]
+pub struct PyHeaderFooter {
+    pub inner: crate::writer::HeaderFooter,
+}
+
+#[pymethods]
+impl PyHeaderFooter {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: crate::writer::HeaderFooter::new(),
+        }
+    }
+
+    /// Create with a single centered element.
+    #[staticmethod]
+    fn center(text: &str) -> Self {
+        Self {
+            inner: crate::writer::HeaderFooter::center(text),
+        }
+    }
+
+    /// Create with a single left-aligned element.
+    #[staticmethod]
+    fn left(text: &str) -> Self {
+        Self {
+            inner: crate::writer::HeaderFooter::left(text),
+        }
+    }
+
+    /// Create with a single right-aligned element.
+    #[staticmethod]
+    fn right(text: &str) -> Self {
+        Self {
+            inner: crate::writer::HeaderFooter::right(text),
+        }
+    }
+
+    /// Set the left element text.
+    fn with_left(mut slf: PyRefMut<'_, Self>, text: &str) -> PyResult<()> {
+        slf.inner = slf.inner.clone().with_left(text);
+        Ok(())
+    }
+
+    /// Set the center element text.
+    fn with_center(mut slf: PyRefMut<'_, Self>, text: &str) -> PyResult<()> {
+        slf.inner = slf.inner.clone().with_center(text);
+        Ok(())
+    }
+
+    /// Set the right element text.
+    fn with_right(mut slf: PyRefMut<'_, Self>, text: &str) -> PyResult<()> {
+        slf.inner = slf.inner.clone().with_right(text);
+        Ok(())
+    }
+
+    /// Set the default style.
+    fn with_style(mut slf: PyRefMut<'_, Self>, style: &PyHFStyle) -> PyResult<()> {
+        slf.inner = slf.inner.clone().with_style(style.inner.clone());
+        Ok(())
+    }
+
+    /// Set the vertical offset from page edge.
+    fn with_offset(mut slf: PyRefMut<'_, Self>, offset: f32) -> PyResult<()> {
+        slf.inner = slf.inner.clone().with_offset(offset);
+        Ok(())
+    }
+}
+
+/// A complete page template with header and footer.
+#[pyclass(name = "PageTemplate")]
+#[derive(Clone)]
+pub struct PyPageTemplate {
+    pub inner: crate::writer::PageTemplate,
+}
+
+#[pymethods]
+impl PyPageTemplate {
+    #[new]
+    fn new() -> Self {
+        Self {
+            inner: crate::writer::PageTemplate::new(),
+        }
+    }
+
+    /// Set the header.
+    fn header(mut slf: PyRefMut<'_, Self>, header: &PyHeaderFooter) -> PyResult<()> {
+        slf.inner = slf.inner.clone().header(header.inner.clone());
+        Ok(())
+    }
+
+    /// Set the footer.
+    fn footer(mut slf: PyRefMut<'_, Self>, footer: &PyHeaderFooter) -> PyResult<()> {
+        slf.inner = slf.inner.clone().footer(footer.inner.clone());
+        Ok(())
+    }
+
+    /// Skip header/footer on first page.
+    fn skip_first_page(mut slf: PyRefMut<'_, Self>) -> PyResult<()> {
+        slf.inner = slf.inner.clone().skip_first_page();
+        Ok(())
+    }
+
+    /// Set a different header for the first page.
+    fn first_page_header(mut slf: PyRefMut<'_, Self>, header: &PyHeaderFooter) -> PyResult<()> {
+        slf.inner = slf.inner.clone().first_page_header(header.inner.clone());
+        Ok(())
+    }
+
+    /// Set a different footer for the first page.
+    fn first_page_footer(mut slf: PyRefMut<'_, Self>, footer: &PyHeaderFooter) -> PyResult<()> {
+        slf.inner = slf.inner.clone().first_page_footer(footer.inner.clone());
+        Ok(())
+    }
+}
+
 /// Python module for PDF library.
 ///
 /// This is the internal module (pdf_oxide) that gets imported by the Python package.
@@ -5168,6 +5440,11 @@ fn pdf_oxide(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLineCap>()?;
     m.add_class::<PyLineJoin>()?;
     m.add_class::<PyPatternPresets>()?;
+
+    // Page Templates
+    m.add_class::<PyPageTemplate>()?;
+    m.add_class::<PyHeaderFooter>()?;
+    m.add_class::<PyHFStyle>()?;
 
     // Office conversion (optional, requires office feature)
     m.add_class::<PyOfficeConverter>()?;

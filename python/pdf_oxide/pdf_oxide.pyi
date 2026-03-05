@@ -137,6 +137,102 @@ class PdfDocument:
         """
         ...
 
+    def erase_region(self, page: int, bbox: Tuple[float, float, float, float]) -> None:
+        """
+        Mark a specific rectangular region on a page for erasure.
+
+        Content in this region will be excluded from all subsequent text and image extractions.
+
+        Args:
+            page: Page index (0-based)
+            bbox: (x, y, width, height) in points
+        """
+        ...
+
+    def clear_erase_regions(self, page: int) -> None:
+        """
+        Clear all erase regions for a page.
+
+        Args:
+            page: Page index (0-based)
+        """
+        ...
+
+    def remove_headers(self, threshold: float = 0.8) -> int:
+        """
+        Heuristically identify and remove repeating headers.
+
+        Args:
+            threshold: Fraction of pages (0.0-1.0) where text must repeat to be removed
+
+        Returns:
+            Number of headers removed
+        """
+        ...
+
+    def remove_footers(self, threshold: float = 0.8) -> int:
+        """
+        Heuristically identify and remove repeating footers.
+
+        Args:
+            threshold: Fraction of pages (0.0-1.0) where text must repeat to be removed
+
+        Returns:
+            Number of footers removed
+        """
+        ...
+
+    def remove_artifacts(self, threshold: float = 0.8) -> int:
+        """
+        Heuristically identify and remove both repeating headers and footers.
+
+        Args:
+            threshold: Fraction of pages (0.0-1.0) where text must repeat to be removed
+
+        Returns:
+            Total number of artifacts removed
+        """
+        ...
+
+    def edit_header(self, page: int, new_text: str) -> None:
+        """
+        Replace existing header content with new text.
+
+        Heuristically identifies existing text in the header area (top 15%),
+        marks it for erasure, and provides a way to add new content.
+
+        Args:
+            page: Page index (0-based)
+            new_text: Replacement text
+        """
+        ...
+
+    def edit_footer(self, page: int, new_text: str) -> None:
+        """
+        Replace existing footer content with new text.
+
+        Heuristically identifies existing text in the footer area (bottom 15%),
+        marks it for erasure, and provides a way to add new content.
+
+        Args:
+            page: Page index (0-based)
+            new_text: Replacement text
+        """
+        ...
+
+    def edit_artifacts(self, page: int, header_text: str, footer_text: str) -> None:
+        """
+        Replace both header and footer content with new text.
+
+        This is a convenience method that calls both edit_header and edit_footer.
+
+        Args:
+            page: Page index (0-based)
+            header_text: Replacement header text
+            footer_text: Replacement footer text
+        """
+        ...
+
     def has_structure_tree(self) -> bool:
         """
         Check if document has a structure tree (Tagged PDF).
@@ -1022,6 +1118,31 @@ class Pdf:
         Example:
             >>> pdf = Pdf.from_markdown("# Hello\\n\\nWorld")
             >>> pdf.save("hello.pdf")
+        """
+        ...
+
+    @staticmethod
+    def from_markdown_with_template(
+        content: str,
+        template: PageTemplate,
+        title: Optional[str] = None,
+        author: Optional[str] = None,
+    ) -> Pdf:
+        """
+        Create a PDF from Markdown content with a template.
+
+        Args:
+            content: Markdown content
+            template: Page template for headers and footers
+            title: Document title (optional)
+            author: Document author (optional)
+
+        Returns:
+            Created PDF document
+
+        Example:
+            >>> template = PageTemplate().header(HeaderFooter.center("Title"))
+            >>> pdf = Pdf.from_markdown_with_template("# Hello", template)
         """
         ...
 
@@ -2422,6 +2543,41 @@ class OfficeConverter:
             >>> pdf.save("document.pdf")
         """
         ...
+
+# ============================================================================
+# Page Templates
+# ============================================================================
+
+class HFStyle:
+    """Style configuration for header/footer text."""
+    def __init__(self) -> None: ...
+    def font(self, name: str, size: float) -> HFStyle: ...
+    def bold(self) -> HFStyle: ...
+    def color(self, r: float, g: float, b: float) -> HFStyle: ...
+
+class HeaderFooter:
+    """A header or footer definition."""
+    def __init__(self) -> None: ...
+    @staticmethod
+    def left(text: str) -> HeaderFooter: ...
+    @staticmethod
+    def center(text: str) -> HeaderFooter: ...
+    @staticmethod
+    def right(text: str) -> HeaderFooter: ...
+    def with_left(self, text: str) -> HeaderFooter: ...
+    def with_center(self, text: str) -> HeaderFooter: ...
+    def with_right(self, text: str) -> HeaderFooter: ...
+    def with_style(self, style: HFStyle) -> HeaderFooter: ...
+    def with_offset(self, offset: float) -> HeaderFooter: ...
+
+class PageTemplate:
+    """A complete page template with header and footer."""
+    def __init__(self) -> None: ...
+    def header(self, header: HeaderFooter) -> PageTemplate: ...
+    def footer(self, footer: HeaderFooter) -> PageTemplate: ...
+    def skip_first_page(self) -> PageTemplate: ...
+    def first_page_header(self, header: HeaderFooter) -> PageTemplate: ...
+    def first_page_footer(self, footer: HeaderFooter) -> PageTemplate: ...
 
 # ============================================================================
 # OCR (optional, requires ocr feature)
