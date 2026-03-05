@@ -5677,7 +5677,7 @@ impl TextExtractor {
                     horizontal_scaling: 100.0, // Tz - per ISO 32000-1:2008 Section 9.3.1
                     is_italic: is_italic_buf,
                     primary_detected: false,
-            artifact_type: None, // Default to false for backward compatibility
+                    artifact_type: None, // Default to false for backward compatibility
                 };
                 self.span_sequence_counter += 1;
 
@@ -6408,7 +6408,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
             TextSpan {
                 text: "General".to_string(),
@@ -6427,7 +6427,7 @@ mod tests {
                 split_boundary_before: true, // Marks this as part of a split boundary
                 offset_semantic: false,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
                 is_italic: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
@@ -7848,7 +7848,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
             TextSpan {
                 text: "Hello".to_string(),
@@ -7866,7 +7866,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
         ];
 
@@ -7913,7 +7913,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             });
         }
 
@@ -8078,7 +8078,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
             TextSpan {
                 text: "World".to_string(),
@@ -8096,7 +8096,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
         ];
 
@@ -8128,7 +8128,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
             TextSpan {
                 text: "World".to_string(),
@@ -8146,7 +8146,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
         ];
 
@@ -8183,7 +8183,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
             TextSpan {
                 text: "Right".to_string(),
@@ -8201,7 +8201,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
         ];
 
@@ -8231,7 +8231,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
             TextSpan {
                 text: " ".to_string(),
@@ -8249,7 +8249,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
             TextSpan {
                 text: "World".to_string(),
@@ -8267,7 +8267,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
         ];
 
@@ -10416,7 +10416,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
             TextSpan {
                 text: "Hello World".to_string(), // Same text, overlapping position
@@ -10434,7 +10434,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
         ];
 
@@ -10462,7 +10462,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
             TextSpan {
                 text: "Hello World".to_string(),           // Same text but far apart
@@ -10480,7 +10480,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
         ];
 
@@ -10773,7 +10773,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
             TextSpan {
                 text: "Left Col".to_string(),
@@ -10791,7 +10791,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
         ];
 
@@ -10865,7 +10865,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
             TextSpan {
                 text: " World".to_string(),                // starts with space
@@ -10883,7 +10883,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
         ];
 
@@ -11173,7 +11173,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
             TextSpan {
                 text: "Line1".to_string(),
@@ -11191,7 +11191,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
         ];
 
@@ -11305,7 +11305,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
             TextSpan {
                 text: " ".to_string(), // offset_semantic space
@@ -11323,7 +11323,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
-            artifact_type: None,
+                artifact_type: None,
             },
         ];
 

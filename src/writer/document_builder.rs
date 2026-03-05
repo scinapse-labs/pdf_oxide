@@ -746,27 +746,32 @@ impl DocumentBuilder {
 
         for (idx, page_data) in self.pages.iter().enumerate() {
             let mut page = writer.add_page(page_data.width, page_data.height);
-            
+
             // 1. Apply Template (Headers/Footers)
             if let Some(ref template) = self.template {
                 let page_number = idx + 1;
-                let context = crate::writer::page_template::PlaceholderContext::new(page_number, total_pages)
-                    .with_title(self.metadata.title.clone().unwrap_or_default())
-                    .with_author(self.metadata.author.clone().unwrap_or_default());
+                let context =
+                    crate::writer::page_template::PlaceholderContext::new(page_number, total_pages)
+                        .with_title(self.metadata.title.clone().unwrap_or_default())
+                        .with_author(self.metadata.author.clone().unwrap_or_default());
 
                 // Apply Header
                 if let Some(header) = template.get_header(page_number) {
                     for element in header.elements() {
                         let text = element.resolve(&context);
                         let style = element.style.as_ref().unwrap_or(&header.style);
-                        
+
                         let x = match element.alignment {
                             crate::writer::page_template::HFAlignment::Left => template.margin_left,
-                            crate::writer::page_template::HFAlignment::Center => page_data.width / 2.0,
-                            crate::writer::page_template::HFAlignment::Right => page_data.width - template.margin_right,
+                            crate::writer::page_template::HFAlignment::Center => {
+                                page_data.width / 2.0
+                            },
+                            crate::writer::page_template::HFAlignment::Right => {
+                                page_data.width - template.margin_right
+                            },
                         };
                         let y = page_data.height - header.offset;
-                        
+
                         page.add_element(&ContentElement::Text(TextContent {
                             text,
                             bbox: Rect::new(x, y, 0.0, style.font_size),
@@ -775,7 +780,11 @@ impl DocumentBuilder {
                                 size: style.font_size,
                             },
                             style: crate::elements::TextStyle {
-                                color: crate::layout::Color { r: style.color.0, g: style.color.1, b: style.color.2 },
+                                color: crate::layout::Color {
+                                    r: style.color.0,
+                                    g: style.color.1,
+                                    b: style.color.2,
+                                },
                                 ..Default::default()
                             },
                             reading_order: None,
@@ -791,14 +800,18 @@ impl DocumentBuilder {
                     for element in footer.elements() {
                         let text = element.resolve(&context);
                         let style = element.style.as_ref().unwrap_or(&footer.style);
-                        
+
                         let x = match element.alignment {
                             crate::writer::page_template::HFAlignment::Left => template.margin_left,
-                            crate::writer::page_template::HFAlignment::Center => page_data.width / 2.0,
-                            crate::writer::page_template::HFAlignment::Right => page_data.width - template.margin_right,
+                            crate::writer::page_template::HFAlignment::Center => {
+                                page_data.width / 2.0
+                            },
+                            crate::writer::page_template::HFAlignment::Right => {
+                                page_data.width - template.margin_right
+                            },
                         };
                         let y = footer.offset;
-                        
+
                         page.add_element(&ContentElement::Text(TextContent {
                             text,
                             bbox: Rect::new(x, y, 0.0, style.font_size),
@@ -807,7 +820,11 @@ impl DocumentBuilder {
                                 size: style.font_size,
                             },
                             style: crate::elements::TextStyle {
-                                color: crate::layout::Color { r: style.color.0, g: style.color.1, b: style.color.2 },
+                                color: crate::layout::Color {
+                                    r: style.color.0,
+                                    g: style.color.1,
+                                    b: style.color.2,
+                                },
                                 ..Default::default()
                             },
                             reading_order: None,

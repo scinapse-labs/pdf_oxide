@@ -199,37 +199,9 @@ impl WasmPdfDocument {
             .map_err(|e| JsValue::from_str(&format!("Failed to extract all text: {}", e)))
     }
 
-    /// Mark a specific rectangular region on a page for erasure.
-    ///
-    /// @param page_index - Zero-based page number
-    /// @param region - [x, y, width, height] in points
-    #[wasm_bindgen(js_name = "eraseRegion")]
-    pub fn erase_region(&mut self, page_index: usize, region: Vec<f32>) -> Result<(), JsValue> {
-        if region.len() != 4 {
-            return Err(JsValue::from_str("Region must have exactly 4 elements [x, y, w, h]"));
-        }
-        self.inner
-            .lock()
-            .map_err(|_| JsValue::from_str("Mutex lock failed"))?
-            .erase_region(page_index, crate::geometry::Rect::new(region[0], region[1], region[2], region[3]))
-            .map_err(|e| JsValue::from_str(&format!("Failed to mark region for erasure: {}", e)))
-    }
-
-    /// Clear all erase regions for a page.
-    ///
-    /// @param page_index - Zero-based page number
-    #[wasm_bindgen(js_name = "clearEraseRegions")]
-    pub fn clear_erase_regions(&mut self, page_index: usize) -> Result<(), JsValue> {
-        self.inner
-            .lock()
-            .map_err(|_| JsValue::from_str("Mutex lock failed"))?
-            .clear_erase_regions(page_index)
-            .map_err(|e| JsValue::from_str(&format!("Failed to clear erase regions: {}", e)))
-    }
-
     /// Identify and remove headers.
     ///
-    /// Uses spec-compliant /Artifact tags when available (100% accuracy), or 
+    /// Uses spec-compliant /Artifact tags when available (100% accuracy), or
     /// falls back to heuristic analysis of the top 15% of pages.
     ///
     /// @param threshold - Fraction of pages (0.0-1.0) where text must repeat (heuristic mode)
@@ -244,7 +216,7 @@ impl WasmPdfDocument {
 
     /// Identify and remove footers.
     ///
-    /// Uses spec-compliant /Artifact tags when available (100% accuracy), or 
+    /// Uses spec-compliant /Artifact tags when available (100% accuracy), or
     /// falls back to heuristic analysis of the bottom 15% of pages.
     ///
     /// @param threshold - Fraction of pages (0.0-1.0) where text must repeat (heuristic mode)
@@ -259,7 +231,7 @@ impl WasmPdfDocument {
 
     /// Identify and remove both headers and footers.
     ///
-    /// Prioritizes ISO 32000 spec-compliant /Artifact tags, with a heuristic 
+    /// Prioritizes ISO 32000 spec-compliant /Artifact tags, with a heuristic
     /// fallback for untagged PDFs.
     ///
     /// @param threshold - Fraction of pages (0.0-1.0) where text must repeat (heuristic mode)
@@ -1903,6 +1875,16 @@ impl WasmPdfDocument {
         urx: f32,
         ury: f32,
     ) -> Result<(), JsValue> {
+        // Mark in inner document for extraction filtering (v0.3.15)
+        self.inner
+            .lock()
+            .map_err(|_| JsValue::from_str("Mutex lock failed"))?
+            .erase_region(
+                page_index,
+                crate::geometry::Rect::new(llx, lly, urx - llx, ury - lly),
+            )
+            .map_err(|e| JsValue::from_str(&format!("Failed to mark region: {}", e)))?;
+
         let editor_arc = self.ensure_editor()?;
         let mut editor = editor_arc
             .lock()
@@ -1921,6 +1903,18 @@ impl WasmPdfDocument {
         if !rects.len().is_multiple_of(4) {
             return Err(JsValue::from_str("rects must have a length that is a multiple of 4"));
         }
+
+        // Mark all regions in inner document (v0.3.15)
+        let mut inner = self.inner.lock().map_err(|_| JsValue::from_str("Mutex lock failed"))?;
+        for chunk in rects.chunks_exact(4) {
+            let (llx, lly, urx, ury) = (chunk[0], chunk[1], chunk[2], chunk[3]);
+            inner.erase_region(
+                page_index,
+                crate::geometry::Rect::new(llx, lly, urx - llx, ury - lly),
+            ).map_err(|e| JsValue::from_str(&format!("Failed to mark region: {}", e)))?;
+        }
+        drop(inner);
+
         let rect_arrays: Vec<[f32; 4]> = rects
             .chunks_exact(4)
             .map(|c| [c[0], c[1], c[2], c[3]])
@@ -1937,6 +1931,13 @@ impl WasmPdfDocument {
     /// Clear all pending erase operations for a page.
     #[wasm_bindgen(js_name = "clearEraseRegions")]
     pub fn clear_erase_regions(&mut self, page_index: usize) -> Result<(), JsValue> {
+        // Clear inner document regions (v0.3.15)
+        self.inner
+            .lock()
+            .map_err(|_| JsValue::from_str("Mutex lock failed"))?
+            .clear_erase_regions(page_index)
+            .map_err(|e| JsValue::from_str(&format!("Failed to clear regions: {}", e)))?;
+
         let editor_arc = self.ensure_editor()?;
         let mut editor = editor_arc
             .lock()

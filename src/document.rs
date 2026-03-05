@@ -3040,7 +3040,8 @@ impl PdfDocument {
     pub fn erase_region(&mut self, page_index: usize, rect: crate::geometry::Rect) -> Result<()> {
         self.erase_regions.entry(page_index).or_default().push(rect);
         // Clear caches for this page to force re-extraction with the new filter
-        self.form_xobject_images_cache.remove(&crate::object::ObjectRef::new(page_index as u32, 0));
+        self.form_xobject_images_cache
+            .remove(&crate::object::ObjectRef::new(page_index as u32, 0));
         Ok(())
     }
 
@@ -3052,7 +3053,7 @@ impl PdfDocument {
 
     /// Identify and remove headers.
     ///
-    /// Uses spec-compliant /Artifact tags when available (100% accuracy), or 
+    /// Uses spec-compliant /Artifact tags when available (100% accuracy), or
     /// falls back to heuristic analysis of the top 15% of pages.
     pub fn remove_headers(&mut self, threshold: f32) -> Result<usize> {
         self.remove_repeated_text(PageArea::Header, threshold)
@@ -3060,7 +3061,7 @@ impl PdfDocument {
 
     /// Identify and remove footers.
     ///
-    /// Uses spec-compliant /Artifact tags when available (100% accuracy), or 
+    /// Uses spec-compliant /Artifact tags when available (100% accuracy), or
     /// falls back to heuristic analysis of the bottom 15% of pages.
     pub fn remove_footers(&mut self, threshold: f32) -> Result<usize> {
         self.remove_repeated_text(PageArea::Footer, threshold)
@@ -3068,7 +3069,7 @@ impl PdfDocument {
 
     /// Identify and remove both headers and footers.
     ///
-    /// Prioritizes ISO 32000 spec-compliant /Artifact tags, with a heuristic 
+    /// Prioritizes ISO 32000 spec-compliant /Artifact tags, with a heuristic
     /// fallback for untagged PDFs.
     ///
     /// # Arguments
@@ -3081,9 +3082,9 @@ impl PdfDocument {
 
     /// Helper to remove repeated text in a specific page area.
     fn remove_repeated_text(&mut self, area: PageArea, threshold: f32) -> Result<usize> {
-        use std::collections::HashMap;
         use crate::extractors::text::{ArtifactType, PaginationSubtype};
-        
+        use std::collections::HashMap;
+
         let page_count = self.page_count()?;
         if page_count < 1 {
             return Ok(0);
@@ -3113,7 +3114,15 @@ impl PdfDocument {
 
         // If we found and removed spec-compliant artifacts, we return early
         if removed_count > 0 {
-            log::info!("Removed {} spec-compliant artifacts from {}", removed_count, if area == PageArea::Header { "headers" } else { "footers" });
+            log::info!(
+                "Removed {} spec-compliant artifacts from {}",
+                removed_count,
+                if area == PageArea::Header {
+                    "headers"
+                } else {
+                    "footers"
+                }
+            );
             return Ok(removed_count);
         }
 
@@ -3185,7 +3194,12 @@ impl PdfDocument {
     /// Replace both header and footer content with new text.
     ///
     /// This is a convenience method that calls both edit_header and edit_footer.
-    pub fn edit_artifacts(&mut self, page_index: usize, header_text: &str, footer_text: &str) -> Result<()> {
+    pub fn edit_artifacts(
+        &mut self,
+        page_index: usize,
+        header_text: &str,
+        footer_text: &str,
+    ) -> Result<()> {
         self.edit_header(page_index, header_text)?;
         self.edit_footer(page_index, footer_text)?;
         Ok(())
@@ -3211,10 +3225,17 @@ impl PdfDocument {
             }
         }
 
-        log::info!("Marked existing {} on page {} for replacement with: {}", 
-            if area == PageArea::Header { "header" } else { "footer" },
-            page_index, new_text);
-            
+        log::info!(
+            "Marked existing {} on page {} for replacement with: {}",
+            if area == PageArea::Header {
+                "header"
+            } else {
+                "footer"
+            },
+            page_index,
+            new_text
+        );
+
         Ok(())
     }
 
@@ -5008,9 +5029,7 @@ impl PdfDocument {
 
         // Filter out spans in erase regions
         if let Some(regions) = self.erase_regions.get(&page_index) {
-            spans.retain(|span| {
-                !regions.iter().any(|r| r.intersects(&span.bbox))
-            });
+            spans.retain(|span| !regions.iter().any(|r| r.intersects(&span.bbox)));
         }
 
         Ok(spans)

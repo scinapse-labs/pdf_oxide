@@ -189,7 +189,7 @@ impl PyPdfDocument {
 
     /// Identify and remove headers.
     ///
-    /// Uses spec-compliant /Artifact tags when available (100% accuracy), or 
+    /// Uses spec-compliant /Artifact tags when available (100% accuracy), or
     /// falls back to heuristic analysis of the top 15% of pages.
     ///
     /// Args:
@@ -203,7 +203,7 @@ impl PyPdfDocument {
 
     /// Identify and remove footers.
     ///
-    /// Uses spec-compliant /Artifact tags when available (100% accuracy), or 
+    /// Uses spec-compliant /Artifact tags when available (100% accuracy), or
     /// falls back to heuristic analysis of the bottom 15% of pages.
     ///
     /// Args:
@@ -217,7 +217,7 @@ impl PyPdfDocument {
 
     /// Identify and remove both headers and footers.
     ///
-    /// Prioritizes ISO 32000 spec-compliant /Artifact tags, with a heuristic 
+    /// Prioritizes ISO 32000 spec-compliant /Artifact tags, with a heuristic
     /// fallback for untagged PDFs.
     ///
     /// Args:
@@ -263,7 +263,12 @@ impl PyPdfDocument {
     ///     page (int): Page index (0-based)
     ///     header_text (str): Replacement header text
     ///     footer_text (str): Replacement footer text
-    fn edit_artifacts(&mut self, page: usize, header_text: &str, footer_text: &str) -> PyResult<()> {
+    fn edit_artifacts(
+        &mut self,
+        page: usize,
+        header_text: &str,
+        footer_text: &str,
+    ) -> PyResult<()> {
         self.inner
             .edit_artifacts(page, header_text, footer_text)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to edit artifacts: {}", e)))
@@ -1258,7 +1263,9 @@ impl PyPdfDocument {
     ) -> PyResult<()> {
         // Mark in inner document for extraction filtering
         let rect = crate::geometry::Rect::new(llx, lly, urx - llx, ury - lly);
-        self.inner.erase_region(page, rect).map_err(|e| PyRuntimeError::new_err(format!("Failed to mark region: {}", e)))?;
+        self.inner
+            .erase_region(page, rect)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to mark region: {}", e)))?;
 
         if self.editor.is_none() {
             let editor = RustDocumentEditor::open(&self.path)
@@ -1286,7 +1293,9 @@ impl PyPdfDocument {
     fn erase_regions(&mut self, page: usize, rects: Vec<(f32, f32, f32, f32)>) -> PyResult<()> {
         for (llx, lly, urx, ury) in &rects {
             let rect = crate::geometry::Rect::new(*llx, *lly, *urx - *llx, *ury - *lly);
-            self.inner.erase_region(page, rect).map_err(|e| PyRuntimeError::new_err(format!("Failed to mark region: {}", e)))?;
+            self.inner
+                .erase_region(page, rect)
+                .map_err(|e| PyRuntimeError::new_err(format!("Failed to mark region: {}", e)))?;
         }
 
         if self.editor.is_none() {
@@ -1312,7 +1321,9 @@ impl PyPdfDocument {
     /// Args:
     ///     page (int): Page index (0-based)
     fn clear_erase_regions(&mut self, page: usize) -> PyResult<()> {
-        self.inner.clear_erase_regions(page).map_err(|e| PyRuntimeError::new_err(format!("Failed to clear regions: {}", e)))?;
+        self.inner
+            .clear_erase_regions(page)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to clear regions: {}", e)))?;
         if let Some(ref mut editor) = self.editor {
             editor.clear_erase_regions(page);
         }

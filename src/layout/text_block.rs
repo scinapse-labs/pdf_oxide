@@ -3,8 +3,8 @@
 //! This module defines structures for representing text elements in a PDF document
 //! with their geometric and styling information.
 
-use crate::geometry::{Point, Rect};
 use crate::extractors::text::ArtifactType;
+use crate::geometry::{Point, Rect};
 use std::collections::HashMap;
 
 /// A text span (complete string from a Tj/TJ operator).
