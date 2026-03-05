@@ -5273,21 +5273,21 @@ impl PyHFStyle {
     }
 
     /// Set the font and size.
-    fn font(mut slf: PyRefMut<'_, Self>, name: &str, size: f32) -> PyResult<()> {
+    fn font<'a>(mut slf: PyRefMut<'a, Self>, name: &str, size: f32) -> PyResult<PyRefMut<'a, Self>> {
         slf.inner = slf.inner.clone().font(name, size);
-        Ok(())
+        Ok(slf)
     }
 
     /// Set bold weight.
-    fn bold(mut slf: PyRefMut<'_, Self>) -> PyResult<()> {
+    fn bold<'a>(mut slf: PyRefMut<'a, Self>) -> PyResult<PyRefMut<'a, Self>> {
         slf.inner = slf.inner.clone().bold();
-        Ok(())
+        Ok(slf)
     }
 
     /// Set text color (RGB, 0.0-1.0).
-    fn color(mut slf: PyRefMut<'_, Self>, r: f32, g: f32, b: f32) -> PyResult<()> {
+    fn color<'a>(mut slf: PyRefMut<'a, Self>, r: f32, g: f32, b: f32) -> PyResult<PyRefMut<'a, Self>> {
         slf.inner = slf.inner.clone().color(r, g, b);
-        Ok(())
+        Ok(slf)
     }
 }
 
@@ -5332,33 +5332,33 @@ impl PyHeaderFooter {
     }
 
     /// Set the left element text.
-    fn with_left(mut slf: PyRefMut<'_, Self>, text: &str) -> PyResult<()> {
+    fn with_left<'a>(mut slf: PyRefMut<'a, Self>, text: &str) -> PyResult<PyRefMut<'a, Self>> {
         slf.inner = slf.inner.clone().with_left(text);
-        Ok(())
+        Ok(slf)
     }
 
     /// Set the center element text.
-    fn with_center(mut slf: PyRefMut<'_, Self>, text: &str) -> PyResult<()> {
+    fn with_center<'a>(mut slf: PyRefMut<'a, Self>, text: &str) -> PyResult<PyRefMut<'a, Self>> {
         slf.inner = slf.inner.clone().with_center(text);
-        Ok(())
+        Ok(slf)
     }
 
     /// Set the right element text.
-    fn with_right(mut slf: PyRefMut<'_, Self>, text: &str) -> PyResult<()> {
+    fn with_right<'a>(mut slf: PyRefMut<'a, Self>, text: &str) -> PyResult<PyRefMut<'a, Self>> {
         slf.inner = slf.inner.clone().with_right(text);
-        Ok(())
+        Ok(slf)
     }
 
     /// Set the default style.
-    fn with_style(mut slf: PyRefMut<'_, Self>, style: &PyHFStyle) -> PyResult<()> {
+    fn with_style<'a>(mut slf: PyRefMut<'a, Self>, style: &PyHFStyle) -> PyResult<PyRefMut<'a, Self>> {
         slf.inner = slf.inner.clone().with_style(style.inner.clone());
-        Ok(())
+        Ok(slf)
     }
 
     /// Set the vertical offset from page edge.
-    fn with_offset(mut slf: PyRefMut<'_, Self>, offset: f32) -> PyResult<()> {
+    fn with_offset<'a>(mut slf: PyRefMut<'a, Self>, offset: f32) -> PyResult<PyRefMut<'a, Self>> {
         slf.inner = slf.inner.clone().with_offset(offset);
-        Ok(())
+        Ok(slf)
     }
 }
 
@@ -5379,33 +5379,33 @@ impl PyPageTemplate {
     }
 
     /// Set the header.
-    fn header(mut slf: PyRefMut<'_, Self>, header: &PyHeaderFooter) -> PyResult<()> {
+    fn header<'a>(mut slf: PyRefMut<'a, Self>, header: &PyHeaderFooter) -> PyResult<PyRefMut<'a, Self>> {
         slf.inner = slf.inner.clone().header(header.inner.clone());
-        Ok(())
+        Ok(slf)
     }
 
     /// Set the footer.
-    fn footer(mut slf: PyRefMut<'_, Self>, footer: &PyHeaderFooter) -> PyResult<()> {
+    fn footer<'a>(mut slf: PyRefMut<'a, Self>, footer: &PyHeaderFooter) -> PyResult<PyRefMut<'a, Self>> {
         slf.inner = slf.inner.clone().footer(footer.inner.clone());
-        Ok(())
+        Ok(slf)
     }
 
     /// Skip header/footer on first page.
-    fn skip_first_page(mut slf: PyRefMut<'_, Self>) -> PyResult<()> {
+    fn skip_first_page<'a>(mut slf: PyRefMut<'a, Self>) -> PyResult<PyRefMut<'a, Self>> {
         slf.inner = slf.inner.clone().skip_first_page();
-        Ok(())
+        Ok(slf)
     }
 
     /// Set a different header for the first page.
-    fn first_page_header(mut slf: PyRefMut<'_, Self>, header: &PyHeaderFooter) -> PyResult<()> {
+    fn first_page_header<'a>(mut slf: PyRefMut<'a, Self>, header: &PyHeaderFooter) -> PyResult<PyRefMut<'a, Self>> {
         slf.inner = slf.inner.clone().first_page_header(header.inner.clone());
-        Ok(())
+        Ok(slf)
     }
 
     /// Set a different footer for the first page.
-    fn first_page_footer(mut slf: PyRefMut<'_, Self>, footer: &PyHeaderFooter) -> PyResult<()> {
+    fn first_page_footer<'a>(mut slf: PyRefMut<'a, Self>, footer: &PyHeaderFooter) -> PyResult<PyRefMut<'a, Self>> {
         slf.inner = slf.inner.clone().first_page_footer(footer.inner.clone());
-        Ok(())
+        Ok(slf)
     }
 }
 
