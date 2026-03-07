@@ -100,7 +100,9 @@ quick-xml = "0.39"
 
 # Python bindings (optional)
 # Using latest version to support Python 3.14+
-pyo3 = { version = "0.27", features = ["abi3-py38"], optional = true }
+pyo3 = { version = "0.27", features = ["abi3-py310"], optional = true }
+# Python stub file generator (optional, enabled with python feature)
+pyo3-stub-gen = { version = "0.19", optional = true }
 
 # WASM support (optional)
 wasm-bindgen = { version = "0.2", optional = true }
@@ -144,7 +146,7 @@ default = []
 logging = []
 
 # Python bindings (v0.1.0)
-python = ["pyo3"]
+python = ["pyo3", "dep:pyo3-stub-gen"]
 
 # The following features are planned for v1.0 and are not yet production-ready.
 # We define them here to avoid check-cfg warnings, but their dependencies are commented out.

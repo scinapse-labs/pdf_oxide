@@ -158,6 +158,27 @@ cargo flamegraph --bench benchmark_name
 # Open flamegraph.svg
 ```
 
+### Python type stubs (.pyi)
+
+Type stubs for the Python bindings are generated from Rust via [pyo3-stub-gen](https://crates.io/crates/pyo3-stub-gen). The Rust code uses `#[gen_stub_pyclass]` / `#[gen_stub_pymethods]` and PyO3 types like `Bound<'_, PyBytes>` so that the generated `.pyi` shows correct Python types (e.g. `bytes`) without per-site overrides.
+
+**Generate stubs locally:**
+
+```bash
+# From project root (uses pdm script; ensures PATH and CARGO_MANIFEST_DIR for stub_gen binary)
+pdm run stub_gen
+```
+
+Or run the wrapper script directly (same effect, works from any directory that has `scripts/`):
+
+```bash
+python scripts/run_stub_gen.py
+```
+
+The script builds the `stub_gen` binary (`cargo build --bin stub_gen --features python,office`), then runs it. Output is written under `python/` according to `[tool.maturin]` in `pyproject.toml` (e.g. `python/pdf_oxide/pdf_oxide/__init__.pyi` for module `pdf_oxide.pdf_oxide`). These stubs are bundled into the wheel by maturin.
+
+**In CI:** The release workflow (`.github/workflows/release.yml`) runs “Generate .pyi from Rust” before building wheels, so each release’s wheels include up-to-date type stubs.
+
 ### Editor Setup
 
 **VS Code** (recommended):
@@ -795,6 +816,6 @@ Brief description of the feature or fix being implemented.
 
 ---
 
-**Last Updated**: 2025-10-29
+**Last Updated**: 2026-03-06
 **Claude Code Version**: Latest
 **Document Version**: 1.0

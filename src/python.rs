@@ -21,7 +21,16 @@
 
 use pyo3::exceptions::{PyIOError, PyRuntimeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyTuple};
+use pyo3::types::{PyBytes, PyDict, PyTuple};
+use pyo3_stub_gen::derive::*;
+
+// Register module-level variable for .pyi (pyo3-stub-gen); matches m.add("VERSION", ...) below.
+pyo3_stub_gen::module_variable!(
+    "pdf_oxide.pdf_oxide",
+    "VERSION",
+    &str,
+    env!("CARGO_PKG_VERSION")
+);
 
 use crate::converters::ConversionOptions as RustConversionOptions;
 use crate::document::PdfDocument as RustPdfDocument;
@@ -42,6 +51,7 @@ use crate::document::PdfDocument as RustPdfDocument;
 /// - `to_html_all(...)`: Convert all pages to HTML
 use crate::editor::DocumentEditor as RustDocumentEditor;
 
+#[gen_stub_pyclass]
 #[pyclass(name = "PdfDocument", unsendable)]
 pub struct PyPdfDocument {
     /// Inner Rust document
@@ -74,6 +84,7 @@ impl PyPdfDocument {
     }
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyPdfDocument {
     /// Open a PDF file.
@@ -120,8 +131,10 @@ impl PyPdfDocument {
     ///     ...     doc = PdfDocument.from_bytes(f.read())
     ///     >>> print(doc.page_count())
     #[staticmethod]
-    fn from_bytes(data: &[u8]) -> PyResult<Self> {
-        let bytes = data.to_vec();
+    fn from_bytes(
+        data: &Bound<'_, PyBytes>,
+    ) -> PyResult<Self> {
+        let bytes = data.as_bytes().to_vec();
         let doc = RustPdfDocument::from_bytes(bytes.clone())
             .map_err(|e| PyIOError::new_err(format!("Failed to open PDF from bytes: {}", e)))?;
 
@@ -2540,11 +2553,15 @@ impl PyPdfDocument {
     ///
     /// Raises:
     ///     RuntimeError: If embedding fails
-    fn embed_file(&mut self, name: &str, data: &[u8]) -> PyResult<()> {
+    fn embed_file(
+        &mut self,
+        name: &str,
+        data: &Bound<'_, PyBytes>,
+    ) -> PyResult<()> {
         self.ensure_editor()?;
         if let Some(ref mut editor) = self.editor {
             editor
-                .embed_file(name, data.to_vec())
+                .embed_file(name, data.as_bytes().to_vec())
                 .map_err(|e| PyRuntimeError::new_err(format!("Failed to embed file: {}", e)))
         } else {
             Err(PyRuntimeError::new_err("No document loaded"))
@@ -2676,11 +2693,13 @@ use crate::extractors::forms::{
 ///     >>> fields = doc.get_form_fields()
 ///     >>> for f in fields:
 ///     ...     print(f"{f.name} ({f.field_type}): {f.value}")
+#[gen_stub_pyclass]
 #[pyclass(name = "FormField", unsendable)]
 pub struct PyFormField {
     inner: RustFormField,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyFormField {
     /// Full qualified field name (e.g., "topmostSubform[0].Page1[0].f1_01[0]").
@@ -2828,11 +2847,13 @@ use crate::api::PdfBuilder as RustPdfBuilder;
 /// Example:
 ///     >>> pdf = Pdf.from_markdown("# Hello World")
 ///     >>> pdf.save("output.pdf")
+#[gen_stub_pyclass]
 #[pyclass(name = "Pdf")]
 pub struct PyPdf {
     bytes: Vec<u8>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyPdf {
     /// Create a PDF from Markdown content.
@@ -2989,8 +3010,8 @@ impl PyPdf {
     ///     >>> data = pdf.to_bytes()
     ///     >>> len(data) > 0
     ///     True
-    fn to_bytes(&self) -> &[u8] {
-        &self.bytes
+    fn to_bytes<'py>(&self, py: Python<'py>) -> Py<PyBytes> {
+        PyBytes::new(py, &self.bytes).unbind()
     }
 
     /// Create a PDF from an image file.
@@ -3048,9 +3069,11 @@ impl PyPdf {
     /// Raises:
     ///     RuntimeError: If image loading or PDF creation fails
     #[staticmethod]
-    fn from_image_bytes(data: &[u8]) -> PyResult<Self> {
+    fn from_image_bytes(
+        data: &Bound<'_, PyBytes>,
+    ) -> PyResult<Self> {
         use crate::api::Pdf;
-        let pdf = Pdf::from_image_bytes(data).map_err(|e| {
+        let pdf = Pdf::from_image_bytes(data.as_bytes()).map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to create PDF from image bytes: {}", e))
         })?;
         Ok(PyPdf {
@@ -3101,14 +3124,17 @@ use crate::converters::office::OfficeConverter as RustOfficeConverter;
 /// pdf.save("presentation.pdf")
 /// ```
 #[cfg(feature = "office")]
+#[gen_stub_pyclass]
 #[pyclass(name = "OfficeConverter")]
 pub struct PyOfficeConverter;
 
 #[cfg(not(feature = "office"))]
+#[gen_stub_pyclass]
 #[pyclass(name = "OfficeConverter")]
 pub struct PyOfficeConverter;
 
 #[cfg(not(feature = "office"))]
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyOfficeConverter {
     #[new]
@@ -3164,6 +3190,7 @@ impl PyOfficeConverter {
 }
 
 #[cfg(feature = "office")]
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyOfficeConverter {
     /// Convert a DOCX file to PDF.
@@ -3206,10 +3233,12 @@ impl PyOfficeConverter {
     ///     ...     pdf = OfficeConverter.from_docx_bytes(f.read())
     ///     >>> pdf.save("document.pdf")
     #[staticmethod]
-    fn from_docx_bytes(data: &[u8]) -> PyResult<PyPdf> {
+    fn from_docx_bytes(
+        data: &Bound<'_, PyBytes>,
+    ) -> PyResult<PyPdf> {
         let converter = RustOfficeConverter::new();
         let bytes = converter
-            .convert_docx_bytes(data)
+            .convert_docx_bytes(data.as_bytes())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to convert DOCX: {}", e)))?;
         Ok(PyPdf { bytes })
     }
@@ -3254,10 +3283,12 @@ impl PyOfficeConverter {
     ///     ...     pdf = OfficeConverter.from_xlsx_bytes(f.read())
     ///     >>> pdf.save("spreadsheet.pdf")
     #[staticmethod]
-    fn from_xlsx_bytes(data: &[u8]) -> PyResult<PyPdf> {
+    fn from_xlsx_bytes(
+        data: &Bound<'_, PyBytes>,
+    ) -> PyResult<PyPdf> {
         let converter = RustOfficeConverter::new();
         let bytes = converter
-            .convert_xlsx_bytes(data)
+            .convert_xlsx_bytes(data.as_bytes())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to convert XLSX: {}", e)))?;
         Ok(PyPdf { bytes })
     }
@@ -3302,10 +3333,12 @@ impl PyOfficeConverter {
     ///     ...     pdf = OfficeConverter.from_pptx_bytes(f.read())
     ///     >>> pdf.save("presentation.pdf")
     #[staticmethod]
-    fn from_pptx_bytes(data: &[u8]) -> PyResult<PyPdf> {
+    fn from_pptx_bytes(
+        data: &Bound<'_, PyBytes>,
+    ) -> PyResult<PyPdf> {
         let converter = RustOfficeConverter::new();
         let bytes = converter
-            .convert_pptx_bytes(data)
+            .convert_pptx_bytes(data.as_bytes())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to convert PPTX: {}", e)))?;
         Ok(PyPdf { bytes })
     }
@@ -3343,6 +3376,7 @@ impl PyOfficeConverter {
 use crate::editor::{ElementId, PdfElement, PdfPage as RustPdfPage, PdfText as RustPdfText};
 
 /// A rectangular region within a PDF page for scoped extraction (v0.3.14).
+#[gen_stub_pyclass]
 #[pyclass(name = "PdfPageRegion")]
 pub struct PyPdfPageRegion {
     pub doc: Py<PyPdfDocument>,
@@ -3350,6 +3384,7 @@ pub struct PyPdfPageRegion {
     pub region: crate::geometry::Rect,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyPdfPageRegion {
     /// Get the bounding box of this region.
@@ -3422,11 +3457,13 @@ impl PyPdfPageRegion {
 ///     >>> page = doc.page(0)
 ///     >>> for text in page.find_text_containing("Hello"):
 ///     ...     print(f"{text.value} at {text.bbox}")
+#[gen_stub_pyclass]
 #[pyclass(name = "PdfPage", unsendable)]
 pub struct PyPdfPage {
     inner: RustPdfPage,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyPdfPage {
     /// Get the page index.
@@ -3689,12 +3726,14 @@ impl PyPdfPage {
 /// Python wrapper for text element ID.
 ///
 /// Used to identify text elements for modification.
+#[gen_stub_pyclass]
 #[pyclass(name = "PdfTextId")]
 #[derive(Clone)]
 pub struct PyPdfTextId {
     inner: ElementId,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyPdfTextId {
     fn __repr__(&self) -> String {
@@ -3710,12 +3749,14 @@ impl PyPdfTextId {
 ///     >>> for text in page.find_text_containing("Hello"):
 ///     ...     print(f"{text.value} at {text.bbox}")
 ///     ...     print(f"Font: {text.font_name} {text.font_size}pt")
+#[gen_stub_pyclass]
 #[pyclass(name = "PdfText")]
 #[derive(Clone)]
 pub struct PyPdfText {
     inner: RustPdfText,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyPdfText {
     /// Get the element ID.
@@ -3836,12 +3877,14 @@ impl PyPdfText {
 }
 
 /// Python wrapper for image element.
+#[gen_stub_pyclass]
 #[pyclass(name = "PdfImage")]
 #[derive(Clone)]
 pub struct PyPdfImage {
     inner: crate::editor::PdfImage,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyPdfImage {
     /// Get the bounding box as (x, y, width, height).
@@ -3876,12 +3919,14 @@ impl PyPdfImage {
 }
 
 /// Python wrapper for annotation.
+#[gen_stub_pyclass]
 #[pyclass(name = "PdfAnnotation")]
 #[derive(Clone)]
 pub struct PyAnnotationWrapper {
     inner: crate::editor::AnnotationWrapper,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyAnnotationWrapper {
     /// Get the annotation subtype (e.g., "Link", "Highlight", "Text").
@@ -3929,12 +3974,14 @@ impl PyAnnotationWrapper {
 /// Python wrapper for generic PDF element.
 ///
 /// Can be one of: Text, Image, Path, Table, or Structure.
+#[gen_stub_pyclass]
 #[pyclass(name = "PdfElement")]
 #[derive(Clone)]
 pub struct PyPdfElement {
     inner: PdfElement,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyPdfElement {
     /// Check if this is a text element.
@@ -4026,12 +4073,14 @@ impl PyPdfElement {
 /// - `font_weight` (str): "normal", "bold", "light", etc.
 /// - `is_italic` (bool): Whether the character is italic
 /// - `color` (tuple): RGB color as (r, g, b) with values 0.0-1.0
+#[gen_stub_pyclass]
 #[pyclass(name = "TextChar")]
 #[derive(Clone)]
 pub struct PyTextChar {
     inner: RustTextChar,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyTextChar {
     /// The character itself.
@@ -4161,12 +4210,14 @@ impl PyTextChar {
 /// - `is_bold` (bool): Whether the text is bold
 /// - `is_italic` (bool): Whether the text is italic
 /// - `color` (tuple): RGB color as (r, g, b) with values 0.0-1.0
+#[gen_stub_pyclass]
 #[pyclass(name = "TextSpan")]
 #[derive(Clone)]
 pub struct PyTextSpan {
     inner: crate::layout::TextSpan,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyTextSpan {
     /// The text content of the span.
@@ -4230,12 +4281,14 @@ impl PyTextSpan {
 }
 
 /// A word extracted from a PDF page (v0.3.14).
+#[gen_stub_pyclass]
 #[pyclass(name = "TextWord")]
 #[derive(Clone)]
 pub struct PyWord {
     inner: crate::layout::Word,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyWord {
     #[getter]
@@ -4289,12 +4342,14 @@ impl PyWord {
 }
 
 /// A line of text extracted from a PDF page (v0.3.14).
+#[gen_stub_pyclass]
 #[pyclass(name = "TextLine")]
 #[derive(Clone)]
 pub struct PyTextLine {
     inner: crate::layout::TextLine,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyTextLine {
     #[getter]
@@ -4469,16 +4524,19 @@ fn outline_items_to_py(
 ///     >>> engine = OcrEngine("det.onnx", "rec.onnx", "dict.txt")
 ///     >>> text = doc.extract_text_ocr(0, engine)
 #[cfg(feature = "ocr")]
+#[gen_stub_pyclass]
 #[pyclass(name = "OcrEngine", unsendable)]
 pub struct PyOcrEngine {
     inner: crate::ocr::OcrEngine,
 }
 
 #[cfg(not(feature = "ocr"))]
+#[gen_stub_pyclass]
 #[pyclass(name = "OcrEngine", unsendable)]
 pub struct PyOcrEngine {}
 
 #[cfg(not(feature = "ocr"))]
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyOcrEngine {
     #[new]
@@ -4489,6 +4547,7 @@ impl PyOcrEngine {
 }
 
 #[cfg(feature = "ocr")]
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyOcrEngine {
     /// Create a new OCR engine.
@@ -4536,6 +4595,7 @@ impl PyOcrEngine {
 ///     >>> config = OcrConfig(det_threshold=0.5, num_threads=8)
 ///     >>> engine = OcrEngine("det.onnx", "rec.onnx", "dict.txt", config)
 #[cfg(feature = "ocr")]
+#[gen_stub_pyclass]
 #[pyclass(name = "OcrConfig")]
 #[derive(Clone)]
 pub struct PyOcrConfig {
@@ -4543,11 +4603,13 @@ pub struct PyOcrConfig {
 }
 
 #[cfg(not(feature = "ocr"))]
+#[gen_stub_pyclass]
 #[pyclass(name = "OcrConfig")]
 #[derive(Clone)]
 pub struct PyOcrConfig {}
 
 #[cfg(not(feature = "ocr"))]
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyOcrConfig {
     #[new]
@@ -4558,6 +4620,7 @@ impl PyOcrConfig {
 }
 
 #[cfg(feature = "ocr")]
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyOcrConfig {
     /// Create OCR configuration with optional parameters.
@@ -4626,12 +4689,14 @@ use crate::writer::{
 ///     >>> color = Color(1.0, 0.0, 0.0)  # Red
 ///     >>> color = Color.red()
 ///     >>> color = Color.from_hex("#FF0000")
+#[gen_stub_pyclass]
 #[pyclass(name = "Color")]
 #[derive(Clone)]
 pub struct PyColor {
     inner: RustColor,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyColor {
     /// Create a new RGB color.
@@ -4738,12 +4803,14 @@ impl PyColor {
 ///
 /// Example:
 ///     >>> gs = ExtGState().blend_mode(BlendMode.MULTIPLY)
+#[gen_stub_pyclass]
 #[pyclass(name = "BlendMode")]
 #[derive(Clone)]
 pub struct PyBlendMode {
     inner: RustBlendMode,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyBlendMode {
     /// Normal blend mode (default).
@@ -4863,6 +4930,7 @@ impl PyBlendMode {
 ///
 /// Example:
 ///     >>> gs = ExtGState().alpha(0.5).blend_mode(BlendMode.MULTIPLY)
+#[gen_stub_pyclass]
 #[pyclass(name = "ExtGState")]
 #[derive(Clone)]
 pub struct PyExtGState {
@@ -4871,6 +4939,7 @@ pub struct PyExtGState {
     blend_mode: Option<RustBlendMode>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyExtGState {
     /// Create a new ExtGState builder.
@@ -4952,6 +5021,7 @@ impl PyExtGState {
 ///     ...     .start(0, 0).end(100, 100) \
 ///     ...     .add_stop(0.0, Color.red()) \
 ///     ...     .add_stop(1.0, Color.blue())
+#[gen_stub_pyclass]
 #[pyclass(name = "LinearGradient")]
 #[derive(Clone)]
 pub struct PyLinearGradient {
@@ -4962,6 +5032,7 @@ pub struct PyLinearGradient {
     extend_end: bool,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyLinearGradient {
     /// Create a new linear gradient.
@@ -5068,6 +5139,7 @@ impl PyLinearGradient {
 ///     >>> gradient = RadialGradient.centered(50, 50, 50) \
 ///     ...     .add_stop(0.0, Color.white()) \
 ///     ...     .add_stop(1.0, Color.black())
+#[gen_stub_pyclass]
 #[pyclass(name = "RadialGradient")]
 #[derive(Clone)]
 pub struct PyRadialGradient {
@@ -5078,6 +5150,7 @@ pub struct PyRadialGradient {
     stops: Vec<(f32, RustColor)>,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyRadialGradient {
     /// Create a new radial gradient.
@@ -5151,6 +5224,7 @@ impl PyRadialGradient {
 }
 
 /// Line cap styles.
+#[gen_stub_pyclass]
 #[pyclass(name = "LineCap")]
 #[derive(Clone)]
 pub struct PyLineCap {
@@ -5158,6 +5232,7 @@ pub struct PyLineCap {
     inner: RustLineCap,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyLineCap {
     /// Butt cap (default).
@@ -5189,6 +5264,7 @@ impl PyLineCap {
 }
 
 /// Line join styles.
+#[gen_stub_pyclass]
 #[pyclass(name = "LineJoin")]
 #[derive(Clone)]
 pub struct PyLineJoin {
@@ -5196,6 +5272,7 @@ pub struct PyLineJoin {
     inner: RustLineJoin,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyLineJoin {
     /// Miter join (default).
@@ -5230,9 +5307,11 @@ impl PyLineJoin {
 ///
 /// Example:
 ///     >>> content = PatternPresets.checkerboard(10, Color.white(), Color.black())
+#[gen_stub_pyclass]
 #[pyclass(name = "PatternPresets")]
 pub struct PyPatternPresets;
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyPatternPresets {
     /// Create horizontal stripes pattern.
@@ -5273,12 +5352,14 @@ impl PyPatternPresets {
 }
 
 /// Style configuration for header/footer text.
+#[gen_stub_pyclass]
 #[pyclass(name = "ArtifactStyle")]
 #[derive(Clone)]
 pub struct PyArtifactStyle {
     pub inner: crate::writer::ArtifactStyle,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyArtifactStyle {
     #[new]
@@ -5317,12 +5398,14 @@ impl PyArtifactStyle {
 }
 
 /// A header or footer definition.
+#[gen_stub_pyclass]
 #[pyclass(name = "Artifact")]
 #[derive(Clone)]
 pub struct PyArtifact {
     pub inner: crate::writer::Artifact,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyArtifact {
     #[new]
@@ -5391,12 +5474,14 @@ impl PyArtifact {
 }
 
 /// A header definition.
+#[gen_stub_pyclass]
 #[pyclass(name = "Header")]
 #[derive(Clone)]
 pub struct PyHeader {
     pub inner: PyArtifact,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyHeader {
     #[new]
@@ -5473,12 +5558,14 @@ impl PyHeader {
 }
 
 /// A footer definition.
+#[gen_stub_pyclass]
 #[pyclass(name = "Footer")]
 #[derive(Clone)]
 pub struct PyFooter {
     pub inner: PyArtifact,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyFooter {
     #[new]
@@ -5555,12 +5642,14 @@ impl PyFooter {
 }
 
 /// A complete page template with header and footer.
+#[gen_stub_pyclass]
 #[pyclass(name = "PageTemplate")]
 #[derive(Clone)]
 pub struct PyPageTemplate {
     pub inner: crate::writer::PageTemplate,
 }
 
+#[gen_stub_pymethods]
 #[pymethods]
 impl PyPageTemplate {
     #[new]
@@ -5694,6 +5783,7 @@ fn pdf_oxide(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Office conversion (optional, requires office feature)
     m.add_class::<PyOfficeConverter>()?;
 
+    // Runtime export; stub is registered via module_variable! at top of this file.
     m.add("VERSION", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

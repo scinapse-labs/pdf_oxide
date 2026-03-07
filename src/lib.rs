@@ -241,6 +241,10 @@ pub mod ocr;
 #[cfg(feature = "python")]
 mod python;
 
+// Stub file generator entry point (used by src/bin/stub_gen.rs)
+#[cfg(feature = "python")]
+pyo3_stub_gen::define_stub_info_gatherer!(stub_info);
+
 // WASM bindings (optional)
 #[cfg(any(target_arch = "wasm32", test))]
 #[cfg(feature = "wasm")]

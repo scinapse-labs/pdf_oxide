@@ -7,7 +7,7 @@ name = "pdf_oxide"
 version = "0.3.15"
 description = "The fastest Python PDF library: 0.8ms mean, 5× faster than PyMuPDF. Text extraction, markdown conversion, PDF creation. 100% pass rate on 3,830 PDFs."
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = {text = "MIT OR Apache-2.0"}
 authors = [
     {name = "PDF Oxide Contributors", email = "yfedoseev@gmail.com"},
@@ -21,8 +21,6 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -114,7 +112,7 @@ python_functions = ["test_*"]
 # Docs: https://docs.astral.sh/ruff/
 [tool.ruff]
 line-length = 100
-target-version = "py38"
+target-version = "py310"
 extend-exclude = [
     ".git",
     "__pycache__",
@@ -181,3 +179,6 @@ python = "./.venv"
 [tool.pdm.scripts]
 fmt = {composite = ["cargo fmt", "ruff check . --select I --fix", "ruff format ."]}
 lint = {composite = ["cargo check", "cargo clippy -- -D warnings", "ruff check . --fix", "ty check ."]}
+# Generate .pyi from Rust (pyo3-stub-gen). Use: pdm run stub_gen
+# Wrapper ensures PATH includes Python DLL dir so stub_gen.exe can load it on Windows.
+stub_gen = "python scripts/run_stub_gen.py"
