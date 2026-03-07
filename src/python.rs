@@ -21,10 +21,15 @@
 
 use pyo3::exceptions::{PyIOError, PyRuntimeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyTuple};
+#[cfg(feature = "python")]
+use pyo3::types::PyBytes;
+#[cfg(feature = "python")]
+#[cfg(any(not(feature = "office"), not(feature = "ocr")))]
+use pyo3::types::{PyDict, PyTuple};
 use pyo3_stub_gen::derive::*;
 
 // Register module-level variable for .pyi (pyo3-stub-gen); matches m.add("VERSION", ...) below.
+#[cfg(feature = "python")]
 pyo3_stub_gen::module_variable!("pdf_oxide.pdf_oxide", "VERSION", &str, env!("CARGO_PKG_VERSION"));
 
 use crate::converters::ConversionOptions as RustConversionOptions;
@@ -329,7 +334,13 @@ impl PyPdfDocument {
                 }
             }
         }
+
         Ok(())
+    }
+
+    /// Deprecated: Use erase_header instead.
+    fn edit_header(&mut self, page: usize) -> PyResult<()> {
+        self.erase_header(page)
     }
 
     /// Erase existing footer content.
@@ -358,7 +369,13 @@ impl PyPdfDocument {
                 }
             }
         }
+
         Ok(())
+    }
+
+    /// Deprecated: Use erase_footer instead.
+    fn edit_footer(&mut self, page: usize) -> PyResult<()> {
+        self.erase_footer(page)
     }
 
     /// Replace both header and footer content with new text.
