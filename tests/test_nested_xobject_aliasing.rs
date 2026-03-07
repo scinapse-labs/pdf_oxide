@@ -1,12 +1,15 @@
-//! Regression test for aliased `&mut PdfDocument` references in recursive XObject processing.
+//! Regression test for recursive XObject processing (previously caused aliasing UB).
 //!
-//! The `TextExtractor` stores a `*mut PdfDocument` raw pointer and dereferences it as `&mut`
-//! inside `process_xobject`. When Form XObjects are nested, this creates multiple overlapping
-//! `&mut PdfDocument` references on the stack — undefined behavior under Rust's aliasing rules.
+//! Before the fix, `TextExtractor` stored a `*mut PdfDocument` raw pointer and dereferenced
+//! it as `&mut` inside `process_xobject`. Nested Form XObjects created overlapping `&mut`
+//! references — undefined behavior under Rust's aliasing rules (confirmed by Miri).
 //!
-//! This test constructs a PDF with deeply nested Form XObjects to exercise the recursive path.
-//! Under release-mode optimizations (`cargo test --release`), the UB may manifest as a segfault
-//! (exit code 139). Under Miri (`cargo +nightly miri test`), it is detected definitively.
+//! The fix uses interior mutability (`RefCell`/`Cell`) on cache fields so that
+//! `TextExtractor` holds a `*const PdfDocument` and dereferences as `&`, eliminating
+//! the aliased `&mut` references entirely.
+//!
+//! This test constructs PDFs with deeply nested Form XObjects to exercise the recursive path
+//! and ensure no regressions.
 
 use pdf_oxide::document::PdfDocument;
 

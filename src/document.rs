@@ -657,7 +657,7 @@ impl PdfDocument {
     ///
     /// `Ok(true)` if authentication succeeded, `Ok(false)` if the password was wrong,
     /// or `Ok(true)` if the PDF is not encrypted (no authentication needed).
-    pub fn authenticate(&mut self, password: &[u8]) -> Result<bool> {
+    pub fn authenticate(&self, password: &[u8]) -> Result<bool> {
         self.ensure_encryption_initialized()?;
         match self.encryption_handler.borrow_mut().as_mut() {
             Some(handler) => handler.authenticate(password),
