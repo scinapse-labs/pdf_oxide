@@ -1,3 +1,5 @@
+format = ["uv run ruff format", "uv run ruff check --select I --fix"]
+
 [output]
 python_version = "3.8"
 
