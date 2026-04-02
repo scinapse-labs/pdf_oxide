@@ -263,39 +263,15 @@ pub enum PageArea {
 }
 
 impl PdfDocument {
-    /// Open a PDF document from a file path.
-    ///
-    /// This function:
-    /// 1. Opens the file
-    /// 2. Parses the PDF header to validate and extract version
-    /// 3. Locates and parses the cross-reference table
-    /// 4. Parses the trailer dictionary
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The file cannot be opened
-    /// - The PDF header is invalid or unsupported
-    /// - The cross-reference table cannot be found or parsed
-    /// - The trailer dictionary is invalid
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use pdf_oxide::document::PdfDocument;
-    ///
-    /// let doc = PdfDocument::open("sample.pdf")?;
-    /// # Ok::<(), pdf_oxide::error::Error>(())
-    /// ```
     /// Open a PDF document from in-memory bytes.
     ///
-    /// This is the primary constructor for WASM environments and for cases where
-    /// the PDF data is already in memory. The `open()` file-based constructor
-    /// delegates to this after reading the file.
+    /// This is the primary constructor for cases where
+    /// the PDF data is already fully loaded in memory. This parses the PDF by 
+    /// wrapping the bytes in a memory reader and delegating to internal parsers.
     ///
     /// # Errors
     ///
-    /// Returns an error if the PDF data is invalid or cannot be parsed.
+    /// Returns an error if the PDF data is invalid, unsupported, or cannot be parsed.
     pub fn from_bytes(data: Vec<u8>) -> Result<Self> {
         let source_bytes = data.clone();
         let reader = PdfReader::Memory(BufReader::new(Cursor::new(data)));
