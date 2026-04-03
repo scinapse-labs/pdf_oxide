@@ -2552,6 +2552,20 @@ pub struct WasmPdf {
 
 #[wasm_bindgen]
 impl WasmPdf {
+    /// Open an existing PDF from bytes for editing.
+    ///
+    /// @param data - PDF file contents as Uint8Array
+    /// @returns WasmPdf for editing
+    #[wasm_bindgen(js_name = "fromBytes")]
+    pub fn from_bytes(data: &[u8]) -> Result<WasmPdf, JsValue> {
+        let mut pdf = crate::api::Pdf::from_bytes(data.to_vec())
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let bytes = pdf
+            .save_to_bytes()
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(WasmPdf { bytes })
+    }
+
     /// Merge multiple PDF byte arrays into a single PDF.
     ///
     /// @param pdfs - Array of Uint8Array, each containing a PDF

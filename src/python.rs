@@ -1869,6 +1869,23 @@ impl PyPdf {
         })
     }
 
+    /// Open an existing PDF from bytes.
+    ///
+    /// Args:
+    ///     data (bytes): PDF file contents
+    ///
+    /// Returns:
+    ///     Pdf: A Pdf object for editing
+    #[staticmethod]
+    fn from_bytes(data: &Bound<'_, PyBytes>) -> PyResult<Self> {
+        let mut pdf = crate::api::Pdf::from_bytes(data.as_bytes().to_vec())
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let bytes = pdf
+            .save_to_bytes()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(PyPdf { bytes })
+    }
+
     /// Merge multiple PDF files into one.
     ///
     /// Args:
