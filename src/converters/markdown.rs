@@ -911,6 +911,7 @@ impl MarkdownConverter {
                     FontWeight::Normal
                 },
                 is_italic: block.is_italic,
+                is_monospace: false,
                 color: Color::black(),
                 mcid: block.mcid,
                 sequence: seq,
@@ -921,6 +922,7 @@ impl MarkdownConverter {
                 horizontal_scaling: 100.0,
                 primary_detected: false,
                 artifact_type: None,
+                char_widths: vec![],
             })
             .collect();
 
@@ -1288,6 +1290,7 @@ mod tests {
                 FontWeight::Normal
             },
             is_italic: false,
+            is_monospace: false,
             color: Color::black(),
             mcid: None,
             origin_x: bbox.x,
@@ -1548,6 +1551,7 @@ mod tests {
                 font_size: 12.0,
                 font_weight: FontWeight::Normal,
                 is_italic: false,
+                is_monospace: false,
                 color: Color::black(),
                 mcid: None,
                 sequence: 0,
@@ -1557,6 +1561,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -1566,6 +1571,7 @@ mod tests {
                 font_size: 12.0,
                 font_weight: FontWeight::Bold, // Even if marked bold
                 is_italic: false,
+                is_monospace: false,
                 color: Color::black(),
                 mcid: None,
                 sequence: 1,
@@ -1575,6 +1581,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -1584,6 +1591,7 @@ mod tests {
                 font_size: 12.0,
                 font_weight: FontWeight::Normal,
                 is_italic: false,
+                is_monospace: false,
                 color: Color::black(),
                 mcid: None,
                 sequence: 2,
@@ -1593,6 +1601,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -1624,6 +1633,7 @@ mod tests {
                 font_size: 12.0,
                 font_weight: FontWeight::Bold,
                 is_italic: false,
+                is_monospace: false,
                 color: Color::black(),
                 mcid: None,
                 sequence: 0,
@@ -1633,6 +1643,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -1642,6 +1653,7 @@ mod tests {
                 font_size: 12.0,
                 font_weight: FontWeight::Bold,
                 is_italic: false,
+                is_monospace: false,
                 color: Color::black(),
                 mcid: None,
                 sequence: 1,
@@ -1651,6 +1663,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -1660,6 +1673,7 @@ mod tests {
                 font_size: 12.0,
                 font_weight: FontWeight::Normal,
                 is_italic: false,
+                is_monospace: false,
                 color: Color::black(),
                 mcid: None,
                 sequence: 2,
@@ -1669,6 +1683,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -1704,6 +1719,7 @@ mod tests {
                 font_size: 12.0,
                 font_weight: FontWeight::Normal,
                 is_italic: false,
+                is_monospace: false,
                 color: Color::black(),
                 mcid: None,
                 sequence: 0,
@@ -1713,6 +1729,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -1722,6 +1739,7 @@ mod tests {
                 font_size: 12.0,
                 font_weight: FontWeight::Bold,
                 is_italic: false,
+                is_monospace: false,
                 color: Color::black(),
                 mcid: None,
                 sequence: 1,
@@ -1731,6 +1749,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -1765,6 +1784,7 @@ mod tests {
                 font_size: 14.0,
                 font_weight: FontWeight::Bold,
                 is_italic: false,
+                is_monospace: false,
                 color: Color::black(),
                 mcid: None,
                 sequence: 0,
@@ -1774,6 +1794,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -1783,6 +1804,7 @@ mod tests {
                 font_size: 14.0,
                 font_weight: FontWeight::Bold,
                 is_italic: false,
+                is_monospace: false,
                 color: Color::black(),
                 mcid: None,
                 sequence: 1,
@@ -1792,6 +1814,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -1801,6 +1824,7 @@ mod tests {
                 font_size: 14.0,
                 font_weight: FontWeight::Bold,
                 is_italic: false,
+                is_monospace: false,
                 color: Color::black(),
                 mcid: None,
                 sequence: 2,
@@ -1810,6 +1834,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -1819,6 +1844,7 @@ mod tests {
                 font_size: 12.0,
                 font_weight: FontWeight::Bold,
                 is_italic: false,
+                is_monospace: false,
                 color: Color::black(),
                 mcid: None,
                 sequence: 3,
@@ -1828,6 +1854,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -1837,6 +1864,7 @@ mod tests {
                 font_size: 12.0,
                 font_weight: FontWeight::Normal,
                 is_italic: false,
+                is_monospace: false,
                 color: Color::black(),
                 mcid: None,
                 sequence: 4,
@@ -1846,6 +1874,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -2010,6 +2039,7 @@ mod tests {
                 font_size: 12.0,
                 font_weight: FontWeight::Bold,
                 is_italic: false,
+                is_monospace: false,
                 color: Color::black(),
                 mcid: None,
                 sequence: 0,
@@ -2019,6 +2049,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -2028,6 +2059,7 @@ mod tests {
                 font_size: 12.0,
                 font_weight: FontWeight::Bold,
                 is_italic: false,
+                is_monospace: false,
                 color: Color::black(),
                 mcid: None,
                 sequence: 1,
@@ -2037,6 +2069,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -2046,6 +2079,7 @@ mod tests {
                 font_size: 12.0,
                 font_weight: FontWeight::Normal,
                 is_italic: false,
+                is_monospace: false,
                 color: Color::black(),
                 mcid: None,
                 sequence: 2,
@@ -2055,6 +2089,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 

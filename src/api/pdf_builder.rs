@@ -542,6 +542,25 @@ impl Pdf {
         })
     }
 
+    /// Open an existing PDF from in-memory bytes.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let bytes = std::fs::read("input.pdf")?;
+    /// let mut doc = Pdf::from_bytes(bytes)?;
+    /// println!("Pages: {}", doc.page_count()?);
+    /// ```
+    pub fn from_bytes(data: Vec<u8>) -> Result<Self> {
+        let editor = DocumentEditor::from_bytes(data)?;
+        Ok(Self {
+            bytes: Vec::new(),
+            config: PdfConfig::default(),
+            editor: Some(editor),
+            source_path: None,
+        })
+    }
+
     /// Open an existing PDF file (legacy API, returns DocumentEditor directly).
     ///
     /// Prefer using `Pdf::open()` for the unified API with DOM access.
@@ -1311,6 +1330,17 @@ impl Pdf {
     /// Save to a new file path (save as).
     pub fn save_as(&mut self, path: impl AsRef<Path>) -> Result<()> {
         self.save(path)
+    }
+
+    /// Save the document and return the PDF as bytes.
+    pub fn save_to_bytes(&mut self) -> Result<Vec<u8>> {
+        if let Some(ref mut editor) = self.editor {
+            editor.save_to_bytes()
+        } else if !self.bytes.is_empty() {
+            Ok(self.bytes.clone())
+        } else {
+            Err(Error::InvalidOperation("No document to save".to_string()))
+        }
     }
 
     /// Save the document with encryption/password protection.
@@ -3205,5 +3235,36 @@ End of table.
         // Image should be centered
         assert!(x > 0.0);
         assert!(y > 0.0);
+    }
+
+    #[test]
+    fn test_pdf_from_bytes() {
+        // Create a PDF, get its bytes, then open via from_bytes
+        let pdf = Pdf::from_text("Hello from bytes").unwrap();
+        let bytes = pdf.into_bytes();
+        assert!(!bytes.is_empty());
+
+        let mut reopened = Pdf::from_bytes(bytes).unwrap();
+        assert_eq!(reopened.page_count().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_pdf_from_bytes_invalid() {
+        let result = Pdf::from_bytes(vec![0, 1, 2, 3]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_pdf_from_bytes_edit_and_save() {
+        let pdf = Pdf::from_text("Editable content").unwrap();
+        let bytes = pdf.into_bytes();
+
+        let mut doc = Pdf::from_bytes(bytes).unwrap();
+        // Should be able to access pages
+        let count = doc.page_count().unwrap();
+        assert_eq!(count, 1);
+        // Should be able to save to bytes
+        let saved = doc.save_to_bytes().unwrap();
+        assert!(!saved.is_empty());
     }
 }

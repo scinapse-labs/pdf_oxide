@@ -262,7 +262,7 @@ pub fn cleanup_markdown(text: &str) -> String {
 /// - Preserves leading spaces on lines (indentation)
 ///
 /// This is specifically designed for plain text extraction to improve readability
-/// and match the quality of established tools like PyMuPDF.
+/// and match the quality of established industry tools.
 ///
 /// # Arguments
 ///

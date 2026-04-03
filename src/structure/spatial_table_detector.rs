@@ -1051,6 +1051,7 @@ mod tests {
             font_size: 12.0,
             font_weight: FontWeight::Normal,
             is_italic: false,
+            is_monospace: false,
             color: Color::black(),
             mcid: None,
             sequence: 0,
@@ -1060,6 +1061,7 @@ mod tests {
             word_spacing: 0.0,
             horizontal_scaling: 1.0,
             primary_detected: false,
+            char_widths: vec![],
         }
     }
     fn make_h_line(x: f32, y: f32, width: f32) -> crate::elements::PathContent {

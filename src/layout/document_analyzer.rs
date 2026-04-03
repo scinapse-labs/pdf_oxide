@@ -441,6 +441,7 @@ mod tests {
             color: Color::black(),
             mcid: None,
             is_italic: false,
+            is_monospace: false,
             origin_x: bbox.x,
             origin_y: bbox.y,
             rotation_degrees: 0.0,

@@ -1134,12 +1134,30 @@ impl PyPdfDocument {
     }
 
     /// Extract text spans.
-    #[pyo3(signature = (page, region=None))]
+    ///
+    /// Args:
+    ///     page: Zero-based page index.
+    ///     region: Optional (x, y, w, h) bounding box to restrict extraction.
+    ///     reading_order: Optional reading order strategy. One of "top_to_bottom"
+    ///         (default) or "column_aware" (XY-Cut column detection).
+    #[pyo3(signature = (page, region=None, reading_order=None))]
     fn extract_spans(
         &mut self,
         page: usize,
         region: Option<(f32, f32, f32, f32)>,
+        reading_order: Option<&str>,
     ) -> PyResult<Vec<PyTextSpan>> {
+        let order = match reading_order {
+            Some("column_aware") => crate::document::ReadingOrder::ColumnAware,
+            Some("top_to_bottom") | None => crate::document::ReadingOrder::TopToBottom,
+            Some(other) => {
+                return Err(PyRuntimeError::new_err(format!(
+                    "Unknown reading_order '{}'. Expected 'top_to_bottom' or 'column_aware'.",
+                    other
+                )));
+            },
+        };
+
         let res = if let Some(r) = region {
             self.inner.extract_spans_in_rect(
                 page,
@@ -1147,10 +1165,69 @@ impl PyPdfDocument {
                 crate::layout::RectFilterMode::Intersects,
             )
         } else {
-            self.inner.extract_spans(page)
+            self.inner.extract_spans_with_reading_order(page, order)
         };
         res.map(|spans| spans.into_iter().map(|s| PyTextSpan { inner: s }).collect())
             .map_err(|e| PyRuntimeError::new_err(e.to_string()))
+    }
+
+    /// Extract complete page text data in a single call.
+    ///
+    /// Returns a dict with spans, per-character data, and page dimensions.
+    /// The chars are derived from spans using font-metric widths when available.
+    ///
+    /// Args:
+    ///     page (int): Zero-based page index.
+    ///     reading_order (str, optional): Reading order strategy. One of
+    ///         "top_to_bottom" (default) or "column_aware".
+    ///
+    /// Returns:
+    ///     dict: ``{"spans": [...], "chars": [...], "page_width": float, "page_height": float}``
+    #[pyo3(signature = (page, reading_order=None))]
+    fn extract_page_text(
+        &mut self,
+        py: Python<'_>,
+        page: usize,
+        reading_order: Option<&str>,
+    ) -> PyResult<Py<PyAny>> {
+        let order = match reading_order {
+            Some("column_aware") => crate::document::ReadingOrder::ColumnAware,
+            Some("top_to_bottom") | None => crate::document::ReadingOrder::TopToBottom,
+            Some(other) => {
+                return Err(PyRuntimeError::new_err(format!(
+                    "Unknown reading_order '{}'. Expected 'top_to_bottom' or 'column_aware'.",
+                    other
+                )));
+            },
+        };
+
+        let page_text = self
+            .inner
+            .extract_page_text_with_options(page, order)
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+
+        let dict = pyo3::types::PyDict::new(py);
+
+        // Spans as list of PyTextSpan
+        let spans_list: Vec<PyTextSpan> = page_text
+            .spans
+            .into_iter()
+            .map(|s| PyTextSpan { inner: s })
+            .collect();
+        dict.set_item("spans", spans_list)?;
+
+        // Chars as list of PyTextChar
+        let chars_list: Vec<PyTextChar> = page_text
+            .chars
+            .into_iter()
+            .map(|ch| PyTextChar { inner: ch })
+            .collect();
+        dict.set_item("chars", chars_list)?;
+
+        dict.set_item("page_width", page_text.page_width)?;
+        dict.set_item("page_height", page_text.page_height)?;
+
+        Ok(dict.into())
     }
 
     /// Get document outline.
@@ -1749,7 +1826,7 @@ fn python_to_form_field_value(
 }
 
 /// Python wrapper for PDF creation.
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "Pdf")]
+#[pyclass(module = "pdf_oxide.pdf_oxide", name = "Pdf", skip_from_py_object)]
 pub struct PyPdf {
     bytes: Vec<u8>,
 }
@@ -1869,6 +1946,23 @@ impl PyPdf {
         })
     }
 
+    /// Open an existing PDF from bytes.
+    ///
+    /// Args:
+    ///     data (bytes): PDF file contents
+    ///
+    /// Returns:
+    ///     Pdf: A Pdf object for editing
+    #[staticmethod]
+    fn from_bytes(data: &Bound<'_, PyBytes>) -> PyResult<Self> {
+        let mut pdf = crate::api::Pdf::from_bytes(data.as_bytes().to_vec())
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        let bytes = pdf
+            .save_to_bytes()
+            .map_err(|e| PyRuntimeError::new_err(e.to_string()))?;
+        Ok(PyPdf { bytes })
+    }
+
     /// Merge multiple PDF files into one.
     ///
     /// Args:
@@ -1895,11 +1989,19 @@ impl PyPdf {
 use crate::converters::office::OfficeConverter as RustOfficeConverter;
 
 #[cfg(feature = "office")]
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "OfficeConverter")]
+#[pyclass(
+    module = "pdf_oxide.pdf_oxide",
+    name = "OfficeConverter",
+    skip_from_py_object
+)]
 pub struct PyOfficeConverter;
 
 #[cfg(not(feature = "office"))]
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "OfficeConverter")]
+#[pyclass(
+    module = "pdf_oxide.pdf_oxide",
+    name = "OfficeConverter",
+    skip_from_py_object
+)]
 pub struct PyOfficeConverter;
 
 #[cfg(not(feature = "office"))]
@@ -2003,7 +2105,11 @@ impl PyOfficeConverter {
 
 use crate::editor::{ElementId, PdfElement, PdfPage as RustPdfPage, PdfText as RustPdfText};
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "PdfPageRegion")]
+#[pyclass(
+    module = "pdf_oxide.pdf_oxide",
+    name = "PdfPageRegion",
+    skip_from_py_object
+)]
 pub struct PyPdfPageRegion {
     pub doc: Py<PyPdfDocument>,
     pub page_index: usize,
@@ -2175,7 +2281,11 @@ impl PyPdfPage {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "PdfTextId")]
+#[pyclass(
+    module = "pdf_oxide.pdf_oxide",
+    name = "PdfTextId",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyPdfTextId {
     inner: ElementId,
@@ -2187,7 +2297,7 @@ impl PyPdfTextId {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "PdfText")]
+#[pyclass(module = "pdf_oxide.pdf_oxide", name = "PdfText", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyPdfText {
     inner: RustPdfText,
@@ -2243,7 +2353,7 @@ impl PyPdfText {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "PdfImage")]
+#[pyclass(module = "pdf_oxide.pdf_oxide", name = "PdfImage", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyPdfImage {
     inner: crate::editor::PdfImage,
@@ -2273,7 +2383,11 @@ impl PyPdfImage {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "PdfAnnotation")]
+#[pyclass(
+    module = "pdf_oxide.pdf_oxide",
+    name = "PdfAnnotation",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyAnnotationWrapper {
     inner: crate::editor::AnnotationWrapper,
@@ -2310,7 +2424,11 @@ impl PyAnnotationWrapper {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "PdfElement")]
+#[pyclass(
+    module = "pdf_oxide.pdf_oxide",
+    name = "PdfElement",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyPdfElement {
     inner: PdfElement,
@@ -2356,7 +2474,7 @@ impl PyPdfElement {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "TextChar")]
+#[pyclass(module = "pdf_oxide.pdf_oxide", name = "TextChar", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyTextChar {
     inner: RustTextChar,
@@ -2393,6 +2511,10 @@ impl PyTextChar {
         self.inner.is_italic
     }
     #[getter]
+    fn is_monospace(&self) -> bool {
+        self.inner.is_monospace
+    }
+    #[getter]
     fn color(&self) -> (f32, f32, f32) {
         (self.inner.color.r, self.inner.color.g, self.inner.color.b)
     }
@@ -2418,7 +2540,7 @@ impl PyTextChar {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "TextSpan")]
+#[pyclass(module = "pdf_oxide.pdf_oxide", name = "TextSpan", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyTextSpan {
     inner: crate::layout::TextSpan,
@@ -2455,12 +2577,20 @@ impl PyTextSpan {
         self.inner.is_italic
     }
     #[getter]
+    fn is_monospace(&self) -> bool {
+        self.inner.is_monospace
+    }
+    #[getter]
+    fn char_widths(&self) -> Vec<f32> {
+        self.inner.char_widths.clone()
+    }
+    #[getter]
     fn color(&self) -> (f32, f32, f32) {
         (self.inner.color.r, self.inner.color.g, self.inner.color.b)
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "TextWord")]
+#[pyclass(module = "pdf_oxide.pdf_oxide", name = "TextWord", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyWord {
     inner: crate::layout::Word,
@@ -2506,7 +2636,7 @@ impl PyWord {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "TextLine")]
+#[pyclass(module = "pdf_oxide.pdf_oxide", name = "TextLine", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyTextLine {
     inner: crate::layout::TextLine,
@@ -2559,6 +2689,46 @@ fn path_to_py_dict(py: Python<'_>, path: &crate::elements::PathContent) -> PyRes
         d.set_item("fill_color", py.None())?;
     }
     d.set_item("operations_count", path.operations.len())?;
+
+    // Expose path operations as list of dicts for vector extraction use cases
+    let ops_list = pyo3::types::PyList::empty(py);
+    for op in &path.operations {
+        let op_dict = pyo3::types::PyDict::new(py);
+        match op {
+            crate::elements::PathOperation::MoveTo(x, y) => {
+                op_dict.set_item("op", "move_to")?;
+                op_dict.set_item("x", *x)?;
+                op_dict.set_item("y", *y)?;
+            },
+            crate::elements::PathOperation::LineTo(x, y) => {
+                op_dict.set_item("op", "line_to")?;
+                op_dict.set_item("x", *x)?;
+                op_dict.set_item("y", *y)?;
+            },
+            crate::elements::PathOperation::CurveTo(cx1, cy1, cx2, cy2, x, y) => {
+                op_dict.set_item("op", "curve_to")?;
+                op_dict.set_item("cx1", *cx1)?;
+                op_dict.set_item("cy1", *cy1)?;
+                op_dict.set_item("cx2", *cx2)?;
+                op_dict.set_item("cy2", *cy2)?;
+                op_dict.set_item("x", *x)?;
+                op_dict.set_item("y", *y)?;
+            },
+            crate::elements::PathOperation::Rectangle(x, y, w, h) => {
+                op_dict.set_item("op", "rectangle")?;
+                op_dict.set_item("x", *x)?;
+                op_dict.set_item("y", *y)?;
+                op_dict.set_item("width", *w)?;
+                op_dict.set_item("height", *h)?;
+            },
+            crate::elements::PathOperation::ClosePath => {
+                op_dict.set_item("op", "close_path")?;
+            },
+        }
+        ops_list.append(op_dict)?;
+    }
+    d.set_item("operations", ops_list)?;
+
     Ok(d.into())
 }
 
@@ -2648,13 +2818,21 @@ impl PyOcrEngine {
 }
 
 #[cfg(feature = "ocr")]
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "OcrConfig")]
+#[pyclass(
+    module = "pdf_oxide.pdf_oxide",
+    name = "OcrConfig",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyOcrConfig {
     inner: crate::ocr::OcrConfig,
 }
 #[cfg(not(feature = "ocr"))]
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "OcrConfig")]
+#[pyclass(
+    module = "pdf_oxide.pdf_oxide",
+    name = "OcrConfig",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyOcrConfig {}
 #[cfg(not(feature = "ocr"))]
@@ -2690,7 +2868,7 @@ impl PyOcrConfig {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "Color")]
+#[pyclass(module = "pdf_oxide.pdf_oxide", name = "Color", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyColor {
     inner: RustColor,
@@ -2767,7 +2945,11 @@ impl PyColor {
 }
 
 #[allow(dead_code)]
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "BlendMode")]
+#[pyclass(
+    module = "pdf_oxide.pdf_oxide",
+    name = "BlendMode",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyBlendMode {
     inner: RustBlendMode,
@@ -2861,7 +3043,11 @@ impl PyBlendMode {
 }
 
 #[allow(dead_code)]
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "ExtGState")]
+#[pyclass(
+    module = "pdf_oxide.pdf_oxide",
+    name = "ExtGState",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyExtGState {
     fill_alpha: Option<f32>,
@@ -2917,7 +3103,11 @@ impl PyExtGState {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "LinearGradient")]
+#[pyclass(
+    module = "pdf_oxide.pdf_oxide",
+    name = "LinearGradient",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyLinearGradient {
     x1: f32,
@@ -2977,7 +3167,11 @@ impl PyLinearGradient {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "RadialGradient")]
+#[pyclass(
+    module = "pdf_oxide.pdf_oxide",
+    name = "RadialGradient",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyRadialGradient {
     x1: f32,
@@ -3035,7 +3229,7 @@ impl PyRadialGradient {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "LineCap")]
+#[pyclass(module = "pdf_oxide.pdf_oxide", name = "LineCap", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyLineCap {
     pub inner: RustLineCap,
@@ -3077,7 +3271,7 @@ impl PyLineCap {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "LineJoin")]
+#[pyclass(module = "pdf_oxide.pdf_oxide", name = "LineJoin", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyLineJoin {
     pub inner: RustLineJoin,
@@ -3119,7 +3313,11 @@ impl PyLineJoin {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "PatternPresets")]
+#[pyclass(
+    module = "pdf_oxide.pdf_oxide",
+    name = "PatternPresets",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyPatternPresets;
 #[pymethods]
@@ -3150,7 +3348,11 @@ impl PyPatternPresets {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "ArtifactStyle")]
+#[pyclass(
+    module = "pdf_oxide.pdf_oxide",
+    name = "ArtifactStyle",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyArtifactStyle {
     pub inner: crate::writer::ArtifactStyle,
@@ -3177,7 +3379,7 @@ impl PyArtifactStyle {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "Artifact")]
+#[pyclass(module = "pdf_oxide.pdf_oxide", name = "Artifact", from_py_object)]
 #[derive(Clone)]
 pub struct PyArtifact {
     pub inner: crate::writer::Artifact,
@@ -3202,7 +3404,7 @@ impl PyArtifact {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "Header")]
+#[pyclass(module = "pdf_oxide.pdf_oxide", name = "Header", from_py_object)]
 #[derive(Clone)]
 pub struct PyHeader {
     pub inner: PyArtifact,
@@ -3227,7 +3429,7 @@ impl PyHeader {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "Footer")]
+#[pyclass(module = "pdf_oxide.pdf_oxide", name = "Footer", from_py_object)]
 #[derive(Clone)]
 pub struct PyFooter {
     pub inner: PyArtifact,
@@ -3252,7 +3454,11 @@ impl PyFooter {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "PageTemplate")]
+#[pyclass(
+    module = "pdf_oxide.pdf_oxide",
+    name = "PageTemplate",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub struct PyPageTemplate {
     pub inner: crate::writer::PageTemplate,

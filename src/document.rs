@@ -22,6 +22,28 @@ use std::io::{BufRead, BufReader, Cursor, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Arc;
 
+/// Reading order mode for span extraction.
+///
+/// Controls how text spans are sorted after extraction from a PDF page.
+/// The default `TopToBottom` mode uses simple geometric sorting, while
+/// `ColumnAware` uses the XY-Cut algorithm to detect columns and read
+/// each column top-to-bottom before moving to the next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ReadingOrder {
+    /// Simple top-to-bottom, left-to-right ordering.
+    ///
+    /// Sorts spans by Y-coordinate descending (top of page first),
+    /// then by X-coordinate ascending (left to right).
+    #[default]
+    TopToBottom,
+    /// Column-aware ordering using the XY-Cut algorithm.
+    ///
+    /// Detects columns via projection-profile analysis and reads each
+    /// column fully (top-to-bottom) before moving to the next column.
+    /// Best for newspapers, academic papers, and multi-column layouts.
+    ColumnAware,
+}
+
 /// Reader enum that dispatches between file-backed (native) and memory-backed (WASM) I/O.
 ///
 /// On native builds, `open()` uses `BufReader<File>` to avoid reading the entire file
@@ -2931,8 +2953,16 @@ impl PdfDocument {
                 if let Some(prev) = prev_span {
                     let prev_end_x = prev.bbox.x + prev.bbox.width;
                     let span_end_x = span.bbox.x + span.bbox.width;
+                    // Containment check: skip a span only if it is geometrically
+                    // contained within the previous span AND has identical text.
+                    // Without the text comparison, distinct lines that happen to
+                    // overlap spatially (e.g., due to small Tm-scaled offsets)
+                    // would be silently dropped (issue #254).
                     let y_same = (prev.bbox.y - span.bbox.y).abs() < 2.0;
-                    if y_same && span.bbox.x >= prev.bbox.x - 0.5 && span_end_x <= prev_end_x + 0.5
+                    if y_same
+                        && span.bbox.x >= prev.bbox.x - 0.5
+                        && span_end_x <= prev_end_x + 0.5
+                        && span.text == prev.text
                     {
                         continue;
                     }
@@ -3960,6 +3990,7 @@ impl PdfDocument {
                 font_size,
                 font_weight: crate::layout::text_block::FontWeight::Normal,
                 is_italic: false,
+                is_monospace: false,
                 color: crate::layout::text_block::Color {
                     r: 0.0,
                     g: 0.0,
@@ -3973,6 +4004,7 @@ impl PdfDocument {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             });
         }
 
@@ -5009,6 +5041,33 @@ impl PdfDocument {
     /// # }
     /// ```
     pub fn extract_spans(&mut self, page_index: usize) -> Result<Vec<crate::layout::TextSpan>> {
+        let mut spans = self.extract_spans_raw(page_index)?;
+
+        // Sort spans by reading order (Y-descending, then X-ascending)
+        spans.sort_by(|a, b| {
+            // Y-descending (top-to-bottom)
+            let y_cmp = crate::utils::safe_float_cmp(b.bbox.y, a.bbox.y);
+            if y_cmp != std::cmp::Ordering::Equal {
+                return y_cmp;
+            }
+            // X-ascending (left-to-right)
+            crate::utils::safe_float_cmp(a.bbox.x, b.bbox.x)
+        });
+
+        // Filter out spans in erase regions
+        if let Some(regions) = self.erase_regions.get(&page_index) {
+            spans.retain(|span| !regions.iter().any(|r| r.intersects(&span.bbox)));
+        }
+
+        Ok(spans)
+    }
+
+    /// Internal helper: extract raw (unsorted) text spans from a page.
+    ///
+    /// This is the common extraction logic shared by `extract_spans` and
+    /// `extract_spans_with_reading_order`. Spans are returned without any
+    /// sorting or erase-region filtering applied.
+    fn extract_spans_raw(&mut self, page_index: usize) -> Result<Vec<crate::layout::TextSpan>> {
         use crate::extractors::TextExtractor;
 
         // Get page object
@@ -5019,8 +5078,6 @@ impl PdfDocument {
         })?;
 
         // Fast pre-check: skip pages that cannot produce text based on resources alone.
-        // Image-only/scanned pages have no /Font resources and only Image XObjects,
-        // so we can skip content stream decompression and parsing entirely.
         if self.page_cannot_have_text(page_dict) {
             return Ok(Vec::new());
         }
@@ -5056,18 +5113,66 @@ impl PdfDocument {
             }
         }
 
-        let mut spans = extractor.extract_text_spans(&content_data)?;
+        extractor.extract_text_spans(&content_data)
+    }
 
-        // Sort spans by reading order (Y-descending, then X-ascending)
-        spans.sort_by(|a, b| {
-            // Y-descending (top-to-bottom)
-            let y_cmp = crate::utils::safe_float_cmp(b.bbox.y, a.bbox.y);
-            if y_cmp != std::cmp::Ordering::Equal {
-                return y_cmp;
-            }
-            // X-ascending (left-to-right)
-            crate::utils::safe_float_cmp(a.bbox.x, b.bbox.x)
-        });
+    /// Extract text spans from a page using a specified reading order strategy.
+    ///
+    /// This method extracts text spans identically to [`extract_spans`](Self::extract_spans),
+    /// then applies the chosen reading order strategy to sort them.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_index` - Zero-based page index
+    /// * `reading_order` - The reading order strategy to apply
+    ///
+    /// # Returns
+    ///
+    /// Vector of TextSpan objects sorted according to the chosen reading order.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use pdf_oxide::document::{PdfDocument, ReadingOrder};
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut doc = PdfDocument::open("two_column.pdf")?;
+    /// let spans = doc.extract_spans_with_reading_order(0, ReadingOrder::ColumnAware)?;
+    /// for span in spans {
+    ///     println!("{}", span.text);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn extract_spans_with_reading_order(
+        &mut self,
+        page_index: usize,
+        reading_order: ReadingOrder,
+    ) -> Result<Vec<crate::layout::TextSpan>> {
+        // Extract raw spans using the common extraction logic
+        let mut spans = self.extract_spans_raw(page_index)?;
+
+        // Apply reading order strategy
+        match reading_order {
+            ReadingOrder::TopToBottom => {
+                // Same sort as extract_spans: Y-descending, X-ascending
+                spans.sort_by(|a, b| {
+                    let y_cmp = crate::utils::safe_float_cmp(b.bbox.y, a.bbox.y);
+                    if y_cmp != std::cmp::Ordering::Equal {
+                        return y_cmp;
+                    }
+                    crate::utils::safe_float_cmp(a.bbox.x, b.bbox.x)
+                });
+            },
+            ReadingOrder::ColumnAware => {
+                use crate::pipeline::reading_order::{
+                    ReadingOrderContext as ROContext, ReadingOrderStrategy, XYCutStrategy,
+                };
+                let strategy = XYCutStrategy::new();
+                let context = ROContext::new().with_page(page_index as u32);
+                let ordered = strategy.apply(spans, &context)?;
+                spans = ordered.into_iter().map(|o| o.span).collect();
+            },
+        }
 
         // Filter out spans in erase regions
         if let Some(regions) = self.erase_regions.get(&page_index) {
@@ -5075,6 +5180,77 @@ impl PdfDocument {
         }
 
         Ok(spans)
+    }
+
+    /// Extract complete page text data in a single call.
+    ///
+    /// Returns a [`PageText`] containing spans in reading order, per-character
+    /// data derived from those spans (using font-metric widths when available),
+    /// and the page dimensions. Uses the default `TopToBottom` reading order.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_index` - Zero-based page index
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use pdf_oxide::document::PdfDocument;
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut doc = PdfDocument::open("example.pdf")?;
+    /// let page_text = doc.extract_page_text(0)?;
+    /// println!("Page {}x{} pt", page_text.page_width, page_text.page_height);
+    /// println!("{} spans, {} chars", page_text.spans.len(), page_text.chars.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn extract_page_text(&mut self, page_index: usize) -> Result<crate::layout::PageText> {
+        self.extract_page_text_with_options(page_index, ReadingOrder::default())
+    }
+
+    /// Extract complete page text data with a specific reading order.
+    ///
+    /// Like [`extract_page_text`](Self::extract_page_text) but allows choosing
+    /// between `TopToBottom` and `ColumnAware` reading order.
+    ///
+    /// # Arguments
+    ///
+    /// * `page_index` - Zero-based page index
+    /// * `reading_order` - Reading order strategy to apply
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use pdf_oxide::document::{PdfDocument, ReadingOrder};
+    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let mut doc = PdfDocument::open("two_column.pdf")?;
+    /// let page_text = doc.extract_page_text_with_options(0, ReadingOrder::ColumnAware)?;
+    /// for span in &page_text.spans {
+    ///     println!("{}", span.text);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn extract_page_text_with_options(
+        &mut self,
+        page_index: usize,
+        reading_order: ReadingOrder,
+    ) -> Result<crate::layout::PageText> {
+        // Get spans with the requested reading order
+        let spans = self.extract_spans_with_reading_order(page_index, reading_order)?;
+
+        // Derive chars from spans (uses char_widths for accurate positioning)
+        let chars: Vec<crate::layout::TextChar> = spans.iter().flat_map(|s| s.to_chars()).collect();
+
+        // Get page dimensions from MediaBox
+        let media_box = self.get_page_media_box(page_index)?;
+
+        Ok(crate::layout::PageText {
+            spans,
+            chars,
+            page_width: media_box.2,
+            page_height: media_box.3,
+        })
     }
 
     /// Extract text spans from a page with custom configuration.
@@ -6002,6 +6178,7 @@ impl PdfDocument {
                     crate::layout::FontWeight::Normal
                 },
                 is_italic: w.is_italic,
+                is_monospace: false,
                 color: crate::layout::Color::black(),
                 mcid: w.mcid,
                 sequence: 0,
@@ -6011,6 +6188,7 @@ impl PdfDocument {
                 word_spacing: 0.0,
                 horizontal_scaling: 1.0,
                 primary_detected: false,
+                char_widths: vec![],
             })
             .collect();
 
@@ -7030,6 +7208,7 @@ impl PdfDocument {
                     crate::layout::FontWeight::Normal
                 },
                 is_italic: w.is_italic,
+                is_monospace: false,
                 color: crate::layout::Color::black(),
                 mcid: w.mcid,
                 sequence: 0,
@@ -7039,6 +7218,7 @@ impl PdfDocument {
                 word_spacing: 0.0,
                 horizontal_scaling: 1.0,
                 primary_detected: false,
+                char_widths: vec![],
             })
             .collect();
 
@@ -9728,6 +9908,7 @@ mod tests {
             font_size,
             font_weight: crate::layout::FontWeight::Normal,
             is_italic: false,
+            is_monospace: false,
             color: crate::layout::Color::new(0.0, 0.0, 0.0),
             mcid: None,
             sequence: 0,
@@ -9737,6 +9918,7 @@ mod tests {
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             primary_detected: false,
+            char_widths: vec![],
         }
     }
 
@@ -12353,5 +12535,239 @@ mod tests {
 
         // Must return true — compressed objects are valid by virtue of being in the xref
         assert!(validate_object_at_offset(&mut cursor, &xref, obj_ref));
+    }
+
+    #[test]
+    fn test_reading_order_enum_default() {
+        let order = ReadingOrder::default();
+        assert_eq!(order, ReadingOrder::TopToBottom);
+    }
+
+    #[test]
+    fn test_reading_order_enum_variants() {
+        assert_ne!(ReadingOrder::TopToBottom, ReadingOrder::ColumnAware);
+        // Verify Clone and Copy
+        let a = ReadingOrder::ColumnAware;
+        let b = a;
+        assert_eq!(a, b);
+    }
+
+    /// Verify that ColumnAware reading order reads column 1 fully before column 2.
+    ///
+    /// Layout:
+    /// ```text
+    ///   Left col (x=10)       Right col (x=200)
+    ///   +-----------+          +-----------+
+    ///   | L1 (y=700)|          | R1 (y=700)|
+    ///   | L2 (y=680)|          | R2 (y=680)|
+    ///   | L3 (y=660)|          | R3 (y=660)|
+    ///   +-----------+          +-----------+
+    /// ```
+    /// Expected ColumnAware order: L1, L2, L3, R1, R2, R3
+    /// TopToBottom order would interleave: L1, R1, L2, R2, L3, R3
+    #[test]
+    fn test_column_aware_reads_column1_before_column2() {
+        use crate::geometry::Rect;
+        use crate::layout::{Color, FontWeight, TextSpan};
+        use crate::pipeline::reading_order::{
+            ReadingOrderContext as ROContext, ReadingOrderStrategy, XYCutStrategy,
+        };
+
+        fn make_span(label: &str, x: f32, y: f32) -> TextSpan {
+            TextSpan {
+                artifact_type: None,
+                text: label.to_string(),
+                bbox: Rect::new(x, y, 80.0, 12.0),
+                font_size: 12.0,
+                font_name: "Test".to_string(),
+                font_weight: FontWeight::Normal,
+                is_italic: false,
+                is_monospace: false,
+                color: Color {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                },
+                mcid: None,
+                sequence: 0,
+                split_boundary_before: false,
+                offset_semantic: false,
+                char_spacing: 0.0,
+                word_spacing: 0.0,
+                horizontal_scaling: 100.0,
+                primary_detected: false,
+                char_widths: vec![],
+            }
+        }
+
+        // Two columns with a wide gap (110 points).
+        // Each column has 3 spans arranged top-to-bottom.
+        let spans = vec![
+            make_span("L1", 10.0, 700.0),
+            make_span("R1", 200.0, 700.0),
+            make_span("L2", 10.0, 680.0),
+            make_span("R2", 200.0, 680.0),
+            make_span("L3", 10.0, 660.0),
+            make_span("R3", 200.0, 660.0),
+        ];
+
+        let strategy = XYCutStrategy::new();
+        let context = ROContext::new();
+        let ordered = strategy
+            .apply(spans, &context)
+            .expect("XYCut should not fail");
+        let labels: Vec<&str> = ordered.iter().map(|o| o.span.text.as_str()).collect();
+
+        // Column-aware: all left-column spans first, then all right-column spans.
+        assert_eq!(
+            labels,
+            vec!["L1", "L2", "L3", "R1", "R2", "R3"],
+            "ColumnAware should read left column fully before right column"
+        );
+    }
+
+    // ========================================================================
+    // extract_page_text / PageText tests (Issue #268)
+    // ========================================================================
+
+    #[test]
+    fn test_extract_page_text_blank_page() {
+        let pdf = build_minimal_pdf(b"");
+        let mut doc = PdfDocument::from_bytes(pdf).unwrap();
+        let page_text = doc.extract_page_text(0).unwrap();
+        assert!(page_text.spans.is_empty());
+        assert!(page_text.chars.is_empty());
+        // MediaBox is [0 0 612 792] in build_minimal_pdf
+        assert!((page_text.page_width - 612.0).abs() < 0.1);
+        assert!((page_text.page_height - 792.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_extract_page_text_has_page_dimensions() {
+        let content = b"BT /F1 12 Tf (Hello) Tj ET";
+        let pdf = build_minimal_pdf(content);
+        let mut doc = PdfDocument::from_bytes(pdf).unwrap();
+        let page_text = doc.extract_page_text(0).unwrap();
+        assert!((page_text.page_width - 612.0).abs() < 0.1);
+        assert!((page_text.page_height - 792.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_extract_page_text_chars_derived_from_spans() {
+        let content = b"BT /F1 12 Tf (Hello) Tj ET";
+        let pdf = build_minimal_pdf(content);
+        let mut doc = PdfDocument::from_bytes(pdf).unwrap();
+        let page_text = doc.extract_page_text(0).unwrap();
+        // Total chars should equal sum of chars across all spans
+        let expected_char_count: usize =
+            page_text.spans.iter().map(|s| s.text.chars().count()).sum();
+        assert_eq!(page_text.chars.len(), expected_char_count);
+    }
+
+    #[test]
+    fn test_extract_page_text_with_column_aware() {
+        let pdf = build_minimal_pdf(b"");
+        let mut doc = PdfDocument::from_bytes(pdf).unwrap();
+        let page_text = doc
+            .extract_page_text_with_options(0, ReadingOrder::ColumnAware)
+            .unwrap();
+        assert!(page_text.spans.is_empty());
+        assert!((page_text.page_width - 612.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_extract_page_text_out_of_bounds() {
+        let pdf = build_minimal_pdf(b"");
+        let mut doc = PdfDocument::from_bytes(pdf).unwrap();
+        let result = doc.extract_page_text(99);
+        assert!(result.is_err());
+    }
+
+    /// Regression test for Issue #254: Tm-scale containment filter must not
+    /// drop distinct text lines whose bounding boxes overlap spatially.
+    ///
+    /// Before the fix, the containment filter in extract_text() would skip any
+    /// span geometrically contained within the previous span, even if the text
+    /// was different.  This caused the second line to silently disappear.
+    ///
+    /// The fix adds a `span.text == prev.text` guard so that only true
+    /// duplicates are filtered.
+    #[test]
+    fn test_containment_filter_preserves_distinct_overlapping_lines() {
+        // Build a minimal PDF with two Td-placed text strings at very close Y
+        // positions (Y=700 and Y=699 — within the 2.0pt "same line" threshold)
+        // but with different content.  The first string is wider so the second
+        // is geometrically contained within it.
+        let content =
+            b"BT /F1 12 Tf 50 700 Td (First line has longer text here) Tj 0 -1 Td (Second) Tj ET";
+
+        // We need a font in Resources for the extractor to work.
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+
+        let off1 = pdf.len();
+        pdf.extend_from_slice(b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+
+        let off2 = pdf.len();
+        pdf.extend_from_slice(b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+
+        let off3 = pdf.len();
+        pdf.extend_from_slice(
+            b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>\nendobj\n",
+        );
+
+        let off4 = pdf.len();
+        let content_len = content.len();
+        pdf.extend_from_slice(
+            format!("4 0 obj\n<< /Length {} >>\nstream\n", content_len).as_bytes(),
+        );
+        pdf.extend_from_slice(content);
+        pdf.extend_from_slice(b"\nendstream\nendobj\n");
+
+        let off5 = pdf.len();
+        pdf.extend_from_slice(
+            b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+        );
+
+        let xref_off = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 6\n");
+        pdf.extend_from_slice(b"0000000000 65535 f \n");
+        pdf.extend_from_slice(format!("{:010} 00000 n \n", off1).as_bytes());
+        pdf.extend_from_slice(format!("{:010} 00000 n \n", off2).as_bytes());
+        pdf.extend_from_slice(format!("{:010} 00000 n \n", off3).as_bytes());
+        pdf.extend_from_slice(format!("{:010} 00000 n \n", off4).as_bytes());
+        pdf.extend_from_slice(format!("{:010} 00000 n \n", off5).as_bytes());
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{}\n%%EOF\n", xref_off)
+                .as_bytes(),
+        );
+
+        let mut doc = PdfDocument::from_bytes(pdf).unwrap();
+        let text = doc.extract_text(0).unwrap();
+
+        assert!(
+            text.contains("First line has longer text here"),
+            "First line should be present in extracted text, got: {:?}",
+            text
+        );
+        assert!(
+            text.contains("Second"),
+            "Second line must NOT be dropped by containment filter, got: {:?}",
+            text
+        );
+    }
+
+    #[test]
+    fn test_page_text_serializable() {
+        // Verify PageText derives serde::Serialize
+        let page_text = crate::layout::PageText {
+            spans: Vec::new(),
+            chars: Vec::new(),
+            page_width: 612.0,
+            page_height: 792.0,
+        };
+        let json = serde_json::to_string(&page_text).unwrap();
+        // Without the `wasm` feature, field names are snake_case
+        assert!(json.contains("page_width"));
+        assert!(json.contains("page_height"));
     }
 }

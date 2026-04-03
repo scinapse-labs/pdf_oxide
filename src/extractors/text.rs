@@ -1285,6 +1285,10 @@ struct TjBuffer {
     font_weight: FontWeight,
     /// Pre-computed italic flag from cached font reference.
     is_italic: bool,
+    /// Whether the font is monospaced (from FixedPitch flag or name heuristic).
+    is_monospace: bool,
+    /// Per-character advance widths in text-space units (before user_h_scale).
+    char_widths: Vec<f32>,
     /// Pre-computed user-space position (CTM applied to text matrix origin).
     /// Avoids two transform_point calls per flush.
     user_pos_x: f32,
@@ -1312,6 +1316,16 @@ impl TjBuffer {
             _ => FontWeight::Normal,
         };
         let is_italic = cached_font.as_ref().map(|f| f.is_italic()).unwrap_or(false);
+        let is_monospace = cached_font.as_ref().is_some_and(|f| {
+            if f.flags.is_some_and(|flags| flags & 1 != 0) {
+                return true;
+            }
+            let name = f.base_font.to_uppercase();
+            name.contains("COURIER")
+                || name.contains("CONSOLAS")
+                || name.contains("MONO")
+                || name.contains("FIXED")
+        });
         // Pre-compute user-space position: text_matrix origin → CTM transform
         let text_pos = state.text_matrix.transform_point(0.0, 0.0);
         let user_pos = state.ctm.transform_point(text_pos.x, text_pos.y);
@@ -1329,6 +1343,8 @@ impl TjBuffer {
             effective_font_size,
             font_weight,
             is_italic,
+            is_monospace,
+            char_widths: Vec::new(),
             user_pos_x: user_pos.x,
             user_pos_y: user_pos.y,
             user_h_scale,
@@ -2582,15 +2598,18 @@ impl TextExtractor {
         let mut deduplicated = Vec::with_capacity(self.chars.len());
         let mut prev_y_rounded: Option<i32> = None;
         let mut prev_x: Option<f32> = None;
+        let mut prev_char: Option<char> = None;
 
         for ch in self.chars.iter() {
             let y_rounded = ch.bbox.y.round() as i32;
             let x = ch.bbox.x;
 
             // Check if this char overlaps with the previous one
-            let should_skip = if let (Some(prev_y), Some(prev_x_val)) = (prev_y_rounded, prev_x) {
-                // Same line and within 2pt horizontally
-                y_rounded == prev_y && (x - prev_x_val).abs() < 2.0
+            let should_skip = if let (Some(prev_y), Some(prev_x_val), Some(prev_ch)) =
+                (prev_y_rounded, prev_x, prev_char)
+            {
+                // Same character, same line, and within 2pt horizontally
+                ch.char == prev_ch && y_rounded == prev_y && (x - prev_x_val).abs() < 2.0
             } else {
                 false
             };
@@ -2599,6 +2618,7 @@ impl TextExtractor {
                 deduplicated.push(ch.clone());
                 prev_y_rounded = Some(y_rounded);
                 prev_x = Some(x);
+                prev_char = Some(ch.char);
             } else {
                 log::trace!(
                     "Deduplicating overlapping char '{}' at X={:.1}, Y={:.1} (too close to previous)",
@@ -2884,7 +2904,7 @@ impl TextExtractor {
     /// - On the same line (Y coordinates within 1pt)
     /// - Very close horizontally (gap < 3pt, approximately average char width)
     ///
-    /// This matches the behavior of industry-standard tools like PyMuPDF.
+    /// This matches the behavior of industry-standard PDF tools.
     fn merge_adjacent_spans(&mut self) {
         if self.spans.is_empty() {
             return;
@@ -2958,9 +2978,9 @@ impl TextExtractor {
                 // Font change: merge with space between font runs
                 log::debug!(
                     "Font change word boundary: '{}' ({}) + '{}' ({}) gap={:.2}pt",
-                    &current.text[current.text.len().saturating_sub(10)..],
+                    crate::utils::safe_suffix(&current.text, 10),
                     current.font_name,
-                    &span.text[..span.text.len().min(10)],
+                    crate::utils::safe_prefix(&span.text, 10),
                     span.font_name,
                     gap
                 );
@@ -3350,8 +3370,12 @@ impl TextExtractor {
                 // Flush Tj buffer before changing text position
                 self.flush_tj_span_buffer()?;
                 let state = self.state_stack.current_mut();
+                // Per ISO 32000-1:2008 §9.4.2, Table 108:
+                // Tlm_new = T(tx,ty) × Tlm_old
+                // The translation is in text-line space, so it must be
+                // pre-multiplied to be scaled by the existing Tlm transform.
                 let tm = Matrix::translation(tx, ty);
-                state.text_line_matrix = state.text_line_matrix.multiply(&tm);
+                state.text_line_matrix = tm.multiply(&state.text_line_matrix);
                 state.text_matrix = state.text_line_matrix;
             },
             Operator::TD { tx, ty } => {
@@ -3361,8 +3385,9 @@ impl TextExtractor {
                 // TD is like Td but also sets leading
                 let state = self.state_stack.current_mut();
                 state.leading = -ty;
+                // Per ISO 32000-1:2008 §9.4.2: Tlm_new = T(tx,ty) × Tlm_old
                 let tm = Matrix::translation(tx, ty);
-                state.text_line_matrix = state.text_line_matrix.multiply(&tm);
+                state.text_line_matrix = tm.multiply(&state.text_line_matrix);
                 state.text_matrix = state.text_line_matrix;
             },
             Operator::TStar => {
@@ -3372,8 +3397,9 @@ impl TextExtractor {
                 // Move to start of next line (using leading)
                 let leading = self.state_stack.current().leading;
                 let state = self.state_stack.current_mut();
+                // Per ISO 32000-1:2008 §9.4.2: Tlm_new = T(0,-TL) × Tlm_old
                 let tm = Matrix::translation(0.0, -leading);
-                state.text_line_matrix = state.text_line_matrix.multiply(&tm);
+                state.text_line_matrix = tm.multiply(&state.text_line_matrix);
                 state.text_matrix = state.text_line_matrix;
             },
 
@@ -3582,6 +3608,7 @@ impl TextExtractor {
                                             color: Color::new(r, g, b),
                                             mcid: self.current_mcid,
                                             is_italic: is_italic_space,
+                                            is_monospace: false,
                                             // Transformation properties (v0.3.1)
                                             origin_x: pos.x,
                                             origin_y: pos.y,
@@ -3600,7 +3627,9 @@ impl TextExtractor {
                                     }
 
                                     let state_mut = self.state_stack.current_mut();
-                                    state_mut.text_matrix.e += tx;
+                                    let tm = state_mut.text_matrix;
+                                    state_mut.text_matrix.e += tx * tm.a;
+                                    state_mut.text_matrix.f += tx * tm.b;
                                 },
                             }
                         }
@@ -3615,8 +3644,9 @@ impl TextExtractor {
                 let leading = self.state_stack.current().leading;
                 {
                     let state = self.state_stack.current_mut();
+                    // Per ISO 32000-1:2008 §9.4.2: Tlm_new = T(0,-TL) × Tlm_old
                     let tm = Matrix::translation(0.0, -leading);
-                    state.text_line_matrix = state.text_line_matrix.multiply(&tm);
+                    state.text_line_matrix = tm.multiply(&state.text_line_matrix);
                     state.text_matrix = state.text_line_matrix;
                 }
 
@@ -3647,8 +3677,9 @@ impl TextExtractor {
                     state.word_space = word_space;
                     state.char_space = char_space;
                     let leading = state.leading;
+                    // Per ISO 32000-1:2008 §9.4.2: Tlm_new = T(0,-TL) × Tlm_old
                     let tm = Matrix::translation(0.0, -leading);
-                    state.text_line_matrix = state.text_line_matrix.multiply(&tm);
+                    state.text_line_matrix = tm.multiply(&state.text_line_matrix);
                     state.text_matrix = state.text_line_matrix;
                 }
 
@@ -4526,6 +4557,33 @@ impl TextExtractor {
                     return Ok(());
                 }
 
+                // Parse /Matrix from Form XObject dict (default: identity per ISO 32000-1 §8.10.1)
+                let form_matrix = if let Some(Object::Array(arr)) = xobject_dict.get("Matrix") {
+                    let get_f32 = |i: usize| -> f32 {
+                        match arr.get(i) {
+                            Some(Object::Real(v)) => *v as f32,
+                            Some(Object::Integer(v)) => *v as f32,
+                            _ => {
+                                if i == 0 || i == 3 {
+                                    1.0
+                                } else {
+                                    0.0
+                                }
+                            },
+                        }
+                    };
+                    Matrix {
+                        a: get_f32(0),
+                        b: get_f32(1),
+                        c: get_f32(2),
+                        d: get_f32(3),
+                        e: get_f32(4),
+                        f: get_f32(5),
+                    }
+                } else {
+                    Matrix::identity()
+                };
+
                 // Only save/restore fonts+resources when XObject has its own Resources.
                 // Avoids expensive HashMap clone for XObjects that inherit page fonts.
                 let has_own_resources = xobject_dict.contains_key("Resources");
@@ -4571,6 +4629,13 @@ impl TextExtractor {
                 // Track span count for result caching
                 let spans_before = self.spans.len();
 
+                // Save graphics state (implicit q per ISO 32000-1 §8.10.1)
+                self.state_stack.save();
+
+                // Concatenate Form XObject /Matrix with CTM
+                let state = self.state_stack.current_mut();
+                state.ctm = form_matrix.multiply(&state.ctm);
+
                 // Streaming parse+execute: avoids allocating Vec<Operator>
                 self.xobject_depth += 1;
                 let parse_result =
@@ -4596,6 +4661,17 @@ impl TextExtractor {
                         .borrow_mut()
                         .insert(xobject_ref, new_spans);
                 }
+
+                // Restore graphics state (implicit Q per ISO 32000-1 §8.10.1)
+                self.state_stack.restore();
+                // Sync cached font with restored state
+                self.cached_current_font = self
+                    .state_stack
+                    .current()
+                    .font_name
+                    .as_ref()
+                    .and_then(|name| self.fonts.get(name))
+                    .cloned();
 
                 // Restore fonts, resources, and XObject cache only if saved
                 if let Some(fonts) = saved_fonts {
@@ -4703,8 +4779,17 @@ impl TextExtractor {
             word_spacing: buffer.word_space, // Tw - captured from PDF content stream
             horizontal_scaling: buffer.horizontal_scaling, // Tz - captured from PDF content stream
             is_italic: is_italic_span,
+            is_monospace: buffer.is_monospace,
             primary_detected: false,
             artifact_type: self.current_artifact_type(),
+            char_widths: {
+                let mut cw = std::mem::take(&mut buffer.char_widths);
+                let h = buffer.user_h_scale;
+                for w in &mut cw {
+                    *w *= h;
+                }
+                cw
+            },
         };
         self.span_sequence_counter += 1;
 
@@ -5136,8 +5221,10 @@ impl TextExtractor {
             word_spacing: state.word_space,
             horizontal_scaling: state.horizontal_scaling,
             is_italic,
+            is_monospace: false,
             primary_detected: true,
             artifact_type: None,
+            char_widths: vec![],
         };
 
         // Step 6: Increment sequence counter and add to spans
@@ -5325,12 +5412,12 @@ impl TextExtractor {
             w_sum
         };
 
-        // Update text matrix position
+        // Update text matrix position per ISO 32000-1:2008 §9.4.4:
+        // Tm_new = [1 0 0 1 tx 0] × Tm_old, where tx = total_width (text-space displacement)
         let state = self.state_stack.current_mut();
         let text_matrix = state.text_matrix;
-        let advance = total_width / text_matrix.d.abs();
-        state.text_matrix.e += advance * text_matrix.a;
-        state.text_matrix.f += advance * text_matrix.b;
+        state.text_matrix.e += total_width * text_matrix.a;
+        state.text_matrix.f += total_width * text_matrix.b;
 
         Ok(total_width)
     }
@@ -5371,7 +5458,8 @@ impl TextExtractor {
                 let width_table = font.get_byte_to_width_table();
                 let mut w_sum = 0.0f32;
                 for &byte in text {
-                    // Unicode decode
+                    // Unicode decode — count chars added for per-char width tracking
+                    let len_before = buffer.unicode.len();
                     let c = char_table[byte as usize];
                     if c != '\0' {
                         buffer.unicode.push(c);
@@ -5403,6 +5491,16 @@ impl TextExtractor {
                         w += ws_hs;
                     }
                     w_sum += w;
+                    // Track per-character advance widths
+                    let chars_added = buffer.unicode.len() - len_before;
+                    if chars_added == 1 {
+                        buffer.char_widths.push(w);
+                    } else if chars_added > 1 {
+                        let per_char = w / chars_added as f32;
+                        for _ in 0..chars_added {
+                            buffer.char_widths.push(per_char);
+                        }
+                    }
                 }
                 w_sum
             } else {
@@ -5417,6 +5515,7 @@ impl TextExtractor {
                         w += ws_hs;
                     }
                     w_sum += w;
+                    buffer.char_widths.push(w);
                 }
                 w_sum
             }
@@ -5427,19 +5526,20 @@ impl TextExtractor {
             let space_w = default_w + ws_hs;
             let mut w_sum = 0.0f32;
             for &byte in text {
-                w_sum += if byte == 0x20 { space_w } else { default_w };
+                let w = if byte == 0x20 { space_w } else { default_w };
+                w_sum += w;
+                buffer.char_widths.push(w);
             }
             w_sum
         };
 
         buffer.accumulated_width += total_width;
 
-        // Update text matrix position
+        // Update text matrix position per ISO 32000-1:2008 §9.4.4
         let state = self.state_stack.current_mut();
         let text_matrix = state.text_matrix;
-        let advance = total_width / text_matrix.d.abs();
-        state.text_matrix.e += advance * text_matrix.a;
-        state.text_matrix.f += advance * text_matrix.b;
+        state.text_matrix.e += total_width * text_matrix.a;
+        state.text_matrix.f += total_width * text_matrix.b;
 
         Ok(())
     }
@@ -5473,6 +5573,7 @@ impl TextExtractor {
                 let width_table = font.get_byte_to_width_table();
                 let mut w_sum = 0.0f32;
                 for &byte in text {
+                    let len_before = buffer.unicode.len();
                     let c = char_table[byte as usize];
                     if c != '\0' {
                         buffer.unicode.push(c);
@@ -5500,6 +5601,15 @@ impl TextExtractor {
                         w += ws_hs;
                     }
                     w_sum += w;
+                    let chars_added = buffer.unicode.len() - len_before;
+                    if chars_added == 1 {
+                        buffer.char_widths.push(w);
+                    } else if chars_added > 1 {
+                        let per_char = w / chars_added as f32;
+                        for _ in 0..chars_added {
+                            buffer.char_widths.push(per_char);
+                        }
+                    }
                 }
                 w_sum
             } else {
@@ -5518,6 +5628,7 @@ impl TextExtractor {
                         w += ws_hs;
                     }
                     w_sum += w;
+                    buffer.char_widths.push(w);
                 }
                 w_sum
             }
@@ -5527,7 +5638,9 @@ impl TextExtractor {
             let space_w = default_w + ws_hs;
             let mut w_sum = 0.0f32;
             for &byte in text {
-                w_sum += if byte == 0x20 { space_w } else { default_w };
+                let w = if byte == 0x20 { space_w } else { default_w };
+                w_sum += w;
+                buffer.char_widths.push(w);
             }
             w_sum
         };
@@ -5536,9 +5649,8 @@ impl TextExtractor {
 
         let state = self.state_stack.current_mut();
         let text_matrix = state.text_matrix;
-        let advance = total_width / text_matrix.d.abs();
-        state.text_matrix.e += advance * text_matrix.a;
-        state.text_matrix.f += advance * text_matrix.b;
+        state.text_matrix.e += total_width * text_matrix.a;
+        state.text_matrix.f += total_width * text_matrix.b;
 
         Ok(())
     }
@@ -5603,8 +5715,10 @@ impl TextExtractor {
             word_spacing: state.word_space, // Tw - captured from PDF content stream
             horizontal_scaling: state.horizontal_scaling, // Tz - captured from PDF content stream
             is_italic: is_italic_space,
+            is_monospace: false,
             primary_detected: false,
             artifact_type: self.current_artifact_type(),
+            char_widths: vec![],
         };
         self.span_sequence_counter += 1;
 
@@ -5612,11 +5726,10 @@ impl TextExtractor {
 
         self.spans.push(span);
 
-        // Advance position
+        // Advance position per ISO 32000-1:2008 §9.4.4
         let state = self.state_stack.current_mut();
-        let advance = space_width / text_matrix.d.abs();
-        state.text_matrix.e += advance * text_matrix.a;
-        state.text_matrix.f += advance * text_matrix.b;
+        state.text_matrix.e += space_width * text_matrix.a;
+        state.text_matrix.f += space_width * text_matrix.b;
 
         Ok(())
     }
@@ -5627,13 +5740,15 @@ impl TextExtractor {
         let font_size = state.font_size;
         let horizontal_scaling = state.horizontal_scaling;
 
-        // Calculate horizontal displacement per PDF spec
+        // Calculate horizontal displacement per PDF spec §9.4.4
         // tx = -offset / 1000.0 * font_size * horizontal_scaling / 100.0
         let tx = -offset / 1000.0 * font_size * horizontal_scaling / 100.0;
 
-        // Update text matrix position
+        // Update text matrix: Tm_new = [1 0 0 1 tx 0] × Tm_old
         let state = self.state_stack.current_mut();
-        state.text_matrix.e += tx;
+        let text_matrix = state.text_matrix;
+        state.text_matrix.e += tx * text_matrix.a;
+        state.text_matrix.f += tx * text_matrix.b;
 
         Ok(())
     }
@@ -5684,8 +5799,17 @@ impl TextExtractor {
                     word_spacing: 0.0, // Tw - per ISO 32000-1:2008 Section 9.3.1
                     horizontal_scaling: 100.0, // Tz - per ISO 32000-1:2008 Section 9.3.1
                     is_italic: is_italic_buf,
+                    is_monospace: buffer.is_monospace,
                     primary_detected: false,
                     artifact_type: None,
+                    char_widths: {
+                        let mut cw = std::mem::take(&mut buffer.char_widths);
+                        let h = buffer.user_h_scale;
+                        for w in &mut cw {
+                            *w *= h;
+                        }
+                        cw
+                    },
                 };
                 self.span_sequence_counter += 1;
 
@@ -5694,7 +5818,7 @@ impl TextExtractor {
                     if span.text.chars().all(|c| c.is_whitespace()) {
                         "<space-only>"
                     } else {
-                        &span.text[..span.text.len().min(20)]
+                        crate::utils::safe_prefix(&span.text, 20)
                     },
                     span.offset_semantic
                 );
@@ -5838,6 +5962,7 @@ impl TextExtractor {
                         color,
                         mcid: self.current_mcid,
                         is_italic: is_italic_char,
+                        is_monospace: false,
                         origin_x: char_origin_x,
                         origin_y: char_origin_y,
                         rotation_degrees,
@@ -5863,9 +5988,11 @@ impl TextExtractor {
                 tx += word_space * hs_factor;
             }
 
-            // Update text matrix in current state
+            // Update text matrix in current state per ISO 32000-1:2008 §9.4.4
             let state_mut = self.state_stack.current_mut();
-            state_mut.text_matrix.e += tx;
+            let tm = state_mut.text_matrix;
+            state_mut.text_matrix.e += tx * tm.a;
+            state_mut.text_matrix.f += tx * tm.b;
         }
 
         Ok(())
@@ -6181,6 +6308,66 @@ mod tests {
         assert_eq!(chars[0].color.b, 0.0);
     }
 
+    /// Regression test: is_monospace flag must propagate from FontInfo flags
+    /// through TjBuffer into the final TextSpan.
+    ///
+    /// When font descriptor flags have bit 0 (FixedPitch) set, spans produced
+    /// by extract_text_spans() must report is_monospace == true.
+    /// Conversely, a proportional font (e.g. Helvetica) must yield false.
+    #[test]
+    fn test_is_monospace_from_font_flags() {
+        // --- Monospace font: flags bit 0 (FixedPitch) set ---
+        let mut mono_font = create_test_font();
+        mono_font.base_font = "Courier".to_string();
+        mono_font.flags = Some(1); // bit 0 = FixedPitch
+
+        let mut extractor = TextExtractor::new();
+        extractor.add_font("F1".to_string(), mono_font);
+
+        let stream = b"BT /F1 12 Tf 100 700 Td (Code) Tj ET";
+        let spans = extractor.extract_text_spans(stream).unwrap();
+
+        assert!(!spans.is_empty(), "should produce at least one span");
+        assert!(
+            spans[0].is_monospace,
+            "Courier with FixedPitch flag should be monospace, got is_monospace=false"
+        );
+
+        // --- Proportional font: no FixedPitch flag ---
+        let mut prop_font = create_test_font();
+        prop_font.base_font = "Helvetica".to_string();
+        prop_font.flags = Some(0); // no FixedPitch
+
+        let mut extractor2 = TextExtractor::new();
+        extractor2.add_font("F2".to_string(), prop_font);
+
+        let stream2 = b"BT /F2 12 Tf 100 700 Td (Text) Tj ET";
+        let spans2 = extractor2.extract_text_spans(stream2).unwrap();
+
+        assert!(!spans2.is_empty(), "should produce at least one span");
+        assert!(
+            !spans2[0].is_monospace,
+            "Helvetica without FixedPitch flag should not be monospace"
+        );
+
+        // --- Name-based heuristic: font name containing MONO ---
+        let mut mono_name_font = create_test_font();
+        mono_name_font.base_font = "DejaVuSansMono".to_string();
+        mono_name_font.flags = None; // no flags at all
+
+        let mut extractor3 = TextExtractor::new();
+        extractor3.add_font("F3".to_string(), mono_name_font);
+
+        let stream3 = b"BT /F3 12 Tf 100 700 Td (Mono) Tj ET";
+        let spans3 = extractor3.extract_text_spans(stream3).unwrap();
+
+        assert!(!spans3.is_empty(), "should produce at least one span");
+        assert!(
+            spans3[0].is_monospace,
+            "Font named DejaVuSansMono should be detected as monospace via name heuristic"
+        );
+    }
+
     #[test]
     #[ignore] // TODO: Fix Tf inside q/Q not working correctly
     fn test_extract_save_restore() {
@@ -6414,10 +6601,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -6438,9 +6627,11 @@ mod tests {
                 offset_semantic: false,
                 primary_detected: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
+                char_widths: vec![],
             },
         ];
 
@@ -6640,6 +6831,35 @@ mod tests {
         // After Td(100, 700), position should be near (100, 700)
         assert!((chars[0].bbox.x - 100.0).abs() < 2.0);
         assert!((chars[0].bbox.y - 700.0).abs() < 2.0);
+    }
+
+    /// Issue #254: TD Y offset must be scaled by the text matrix.
+    /// Pattern: `/F1 1 Tf 10 0 0 10 72 700 Tm (Line one) Tj 0 -1.3 TD (Line two) Tj`
+    /// The Tm sets a 10x scale, so `0 -1.3 TD` should produce a 13pt vertical gap,
+    /// not 1.3pt. Both lines must appear in extracted text.
+    #[test]
+    fn test_issue_254_tm_scale_td_offset() {
+        let mut extractor = TextExtractor::new();
+        let font = create_test_font();
+        extractor.add_font("F1".to_string(), font);
+
+        // Font size 1 with Tm scale 10 — effective font size is 10pt.
+        // TD(0, -1.3) in text space = 13pt in user space.
+        let stream = b"BT /F1 1 Tf 10 0 0 10 72 700 Tm (Line one) Tj 0 -1.3 TD (Line two) Tj ET";
+        let chars = extractor.extract(stream).unwrap();
+
+        // Collect unique text
+        let text: String = chars.iter().map(|c| c.char).collect();
+        assert!(text.contains("Line one"), "Should contain 'Line one', got: {}", text);
+        assert!(text.contains("Line two"), "Should contain 'Line two', got: {}", text);
+
+        // Verify the Y gap is ~13pt (1.3 * 10), not 1.3pt
+        let line_one_y = chars.iter().find(|c| c.char == 'L').unwrap().bbox.y;
+        let line_two_chars: Vec<_> = chars.iter().filter(|c| c.char == 'L').collect();
+        assert!(line_two_chars.len() >= 2, "Should have at least 2 'L' chars (one per line)");
+        let line_two_y = line_two_chars[1].bbox.y;
+        let y_gap = (line_one_y - line_two_y).abs();
+        assert!(y_gap > 5.0, "Y gap should be ~13pt (Tm-scaled), got {:.1}pt", y_gap);
     }
 
     #[test]
@@ -7757,6 +7977,7 @@ mod tests {
                 color: Color::black(),
                 mcid: None,
                 is_italic: false,
+                is_monospace: false,
                 origin_x: 100.0,
                 origin_y: 700.0,
                 rotation_degrees: 0.0,
@@ -7772,6 +7993,7 @@ mod tests {
                 color: Color::black(),
                 mcid: None,
                 is_italic: false,
+                is_monospace: false,
                 origin_x: 100.5,
                 origin_y: 700.0,
                 rotation_degrees: 0.0,
@@ -7799,6 +8021,7 @@ mod tests {
                 color: Color::black(),
                 mcid: None,
                 is_italic: false,
+                is_monospace: false,
                 origin_x: 100.0,
                 origin_y: 700.0,
                 rotation_degrees: 0.0,
@@ -7814,6 +8037,7 @@ mod tests {
                 color: Color::black(),
                 mcid: None,
                 is_italic: false,
+                is_monospace: false,
                 origin_x: 100.0,
                 origin_y: 680.0,
                 rotation_degrees: 0.0,
@@ -7831,6 +8055,75 @@ mod tests {
         let mut extractor = TextExtractor::new();
         extractor.deduplicate_overlapping_chars();
         assert!(extractor.chars.is_empty());
+    }
+
+    #[test]
+    fn test_deduplicate_keeps_distinct_close_chars() {
+        // Issue #253: distinct characters close together should NOT be dropped
+        let mut extractor = TextExtractor::new();
+
+        let make_char = |c: char, x: f32| TextChar {
+            char: c,
+            bbox: Rect::new(x, 700.0, 6.0, 12.0),
+            font_name: "F1".to_string(),
+            font_size: 12.0,
+            font_weight: FontWeight::Normal,
+            color: Color::black(),
+            mcid: None,
+            is_italic: false,
+            is_monospace: false,
+            origin_x: x,
+            origin_y: 700.0,
+            rotation_degrees: 0.0,
+            advance_width: 6.0,
+            matrix: None,
+        };
+
+        // 't' at x=100, ' ' at x=105, 'r' at x=106.5 (within 2pt of ' ' but different char)
+        extractor.chars = vec![
+            make_char('t', 100.0),
+            make_char(' ', 105.0),
+            make_char('r', 106.5),
+        ];
+
+        extractor.deduplicate_overlapping_chars();
+        assert_eq!(
+            extractor.chars.len(),
+            3,
+            "Distinct characters close together must not be dropped"
+        );
+        assert_eq!(extractor.chars[0].char, 't');
+        assert_eq!(extractor.chars[1].char, ' ');
+        assert_eq!(extractor.chars[2].char, 'r');
+    }
+
+    #[test]
+    fn test_deduplicate_still_removes_same_char_duplicates() {
+        // Duplicate same character at nearly the same position should still be deduped
+        let mut extractor = TextExtractor::new();
+
+        let make_char = |c: char, x: f32| TextChar {
+            char: c,
+            bbox: Rect::new(x, 700.0, 6.0, 12.0),
+            font_name: "F1".to_string(),
+            font_size: 12.0,
+            font_weight: FontWeight::Normal,
+            color: Color::black(),
+            mcid: None,
+            is_italic: false,
+            is_monospace: false,
+            origin_x: x,
+            origin_y: 700.0,
+            rotation_degrees: 0.0,
+            advance_width: 6.0,
+            matrix: None,
+        };
+
+        extractor.chars = vec![make_char('A', 100.0), make_char('A', 100.5)];
+
+        extractor.deduplicate_overlapping_chars();
+        assert_eq!(extractor.chars.len(), 1, "Duplicate same char should still be deduped");
+        assert_eq!(extractor.chars[0].char, 'A');
     }
 
     // ========================================================================
@@ -7854,10 +8147,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -7872,10 +8167,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -7919,10 +8216,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             });
         }
 
@@ -7948,6 +8247,7 @@ mod tests {
                 color: Color::black(),
                 mcid: None,
                 is_italic: false,
+                is_monospace: false,
                 origin_x: 100.0,
                 origin_y: 680.0,
                 rotation_degrees: 0.0,
@@ -7963,6 +8263,7 @@ mod tests {
                 color: Color::black(),
                 mcid: None,
                 is_italic: false,
+                is_monospace: false,
                 origin_x: 100.0,
                 origin_y: 700.0,
                 rotation_degrees: 0.0,
@@ -7991,6 +8292,7 @@ mod tests {
                 color: Color::black(),
                 mcid: None,
                 is_italic: false,
+                is_monospace: false,
                 origin_x: 200.0,
                 origin_y: 700.0,
                 rotation_degrees: 0.0,
@@ -8006,6 +8308,7 @@ mod tests {
                 color: Color::black(),
                 mcid: None,
                 is_italic: false,
+                is_monospace: false,
                 origin_x: 100.0,
                 origin_y: 700.0,
                 rotation_degrees: 0.0,
@@ -8033,6 +8336,7 @@ mod tests {
                 color: Color::black(),
                 mcid: None,
                 is_italic: false,
+                is_monospace: false,
                 origin_x: 0.0,
                 origin_y: 0.0,
                 rotation_degrees: 0.0,
@@ -8048,6 +8352,7 @@ mod tests {
                 color: Color::black(),
                 mcid: None,
                 is_italic: false,
+                is_monospace: false,
                 origin_x: 100.0,
                 origin_y: 700.0,
                 rotation_degrees: 0.0,
@@ -8084,10 +8389,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -8102,10 +8409,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -8134,10 +8443,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -8152,10 +8463,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -8189,10 +8502,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -8207,10 +8522,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -8237,10 +8554,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -8255,10 +8574,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: true, // TJ offset space
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -8273,10 +8594,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -10422,10 +10745,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -10440,10 +10765,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -10468,10 +10795,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -10486,10 +10815,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -10574,10 +10905,12 @@ mod tests {
             split_boundary_before: false,
             offset_semantic: false,
             is_italic: false,
+            is_monospace: false,
             char_spacing: 0.0,
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             primary_detected: false,
+            char_widths: vec![],
         }];
 
         extractor.split_fused_words();
@@ -10603,10 +10936,12 @@ mod tests {
             split_boundary_before: false,
             offset_semantic: false,
             is_italic: false,
+            is_monospace: false,
             char_spacing: 0.0,
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             primary_detected: false,
+            char_widths: vec![],
         }];
 
         extractor.split_fused_words();
@@ -10779,10 +11114,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -10797,10 +11134,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -10871,10 +11210,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -10889,10 +11230,12 @@ mod tests {
                 split_boundary_before: true, // forces merge-with-space path
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -11179,10 +11522,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -11197,10 +11542,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -11311,10 +11658,12 @@ mod tests {
                 split_boundary_before: false,
                 offset_semantic: false,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -11329,10 +11678,12 @@ mod tests {
                 split_boundary_before: true, // forcing merge path
                 offset_semantic: true,
                 is_italic: false,
+                is_monospace: false,
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 

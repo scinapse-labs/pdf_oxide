@@ -40,6 +40,7 @@ fn create_test_span(
         font_size: height,
         font_weight: FontWeight::Normal,
         is_italic: false,
+        is_monospace: false,
         color: Color::black(),
         mcid: None,
         sequence: 0,
@@ -49,6 +50,7 @@ fn create_test_span(
         word_spacing: 0.0,         // Tw parameter (Section 9.3.1)
         horizontal_scaling: 100.0, // Tz parameter (Section 9.3.1)
         primary_detected: false,
+        char_widths: vec![],
     }
 }
 

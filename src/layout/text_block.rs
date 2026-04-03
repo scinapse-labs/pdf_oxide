@@ -16,9 +16,10 @@ use std::collections::HashMap;
 /// Extracting complete strings instead of individual characters:
 /// - Avoids overlapping character issues
 /// - Preserves PDF's text positioning intent
-/// - Matches industry best practices (PyMuPDF, etc.)
+/// - Matches industry best practices
 /// - More robust for complex layouts
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(feature = "wasm", serde(rename_all = "camelCase"))]
 pub struct TextSpan {
     /// The complete text string
     pub text: String,
@@ -32,6 +33,8 @@ pub struct TextSpan {
     pub font_weight: FontWeight,
     /// Font style: italic or normal
     pub is_italic: bool,
+    /// Whether the font is monospaced (from PDF font descriptor FixedPitch flag)
+    pub is_monospace: bool,
     /// Text color
     pub color: Color,
     /// Marked Content ID (for Tagged PDFs)
@@ -52,6 +55,11 @@ pub struct TextSpan {
     pub primary_detected: bool,
     /// Artifact type classification for filtered content (PDF Spec Section 14.8.2.2)
     pub artifact_type: Option<ArtifactType>,
+    /// Per-character advance widths in user-space points.
+    /// When non-empty and matching text length, to_chars() uses these
+    /// for accurate per-glyph bounding boxes instead of uniform division.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub char_widths: Vec<f32>,
 }
 
 impl Default for TextSpan {
@@ -63,6 +71,7 @@ impl Default for TextSpan {
             font_size: 12.0,
             font_weight: FontWeight::Normal,
             is_italic: false,
+            is_monospace: false,
             color: Color::black(),
             mcid: None,
             sequence: 0,
@@ -73,6 +82,7 @@ impl Default for TextSpan {
             horizontal_scaling: 100.0,
             primary_detected: false,
             artifact_type: None,
+            char_widths: Vec::new(),
         }
     }
 }
@@ -85,31 +95,63 @@ impl TextSpan {
             return Vec::new();
         }
 
-        let char_width = self.bbox.width / (char_count as f32);
-        self.text
-            .chars()
-            .enumerate()
-            .map(|(i, c)| TextChar {
-                char: c,
-                bbox: Rect::new(
-                    self.bbox.x + (i as f32) * char_width,
-                    self.bbox.y,
-                    char_width,
-                    self.bbox.height,
-                ),
-                font_name: self.font_name.clone(),
-                font_size: self.font_size,
-                font_weight: self.font_weight,
-                is_italic: self.is_italic,
-                color: self.color,
-                mcid: self.mcid,
-                origin_x: self.bbox.x + (i as f32) * char_width,
-                origin_y: self.bbox.y,
-                rotation_degrees: 0.0,
-                advance_width: char_width,
-                matrix: Some([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-            })
-            .collect()
+        // Use per-character widths when available and matching text length;
+        // otherwise fall back to uniform division (backward compatible).
+        if self.char_widths.len() == char_count {
+            let mut x = self.bbox.x;
+            self.text
+                .chars()
+                .enumerate()
+                .map(|(i, c)| {
+                    let w = self.char_widths[i];
+                    let char_x = x;
+                    x += w;
+                    TextChar {
+                        char: c,
+                        bbox: Rect::new(char_x, self.bbox.y, w, self.bbox.height),
+                        font_name: self.font_name.clone(),
+                        font_size: self.font_size,
+                        font_weight: self.font_weight,
+                        is_italic: self.is_italic,
+                        is_monospace: self.is_monospace,
+                        color: self.color,
+                        mcid: self.mcid,
+                        origin_x: char_x,
+                        origin_y: self.bbox.y,
+                        rotation_degrees: 0.0,
+                        advance_width: w,
+                        matrix: Some([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+                    }
+                })
+                .collect()
+        } else {
+            let char_width = self.bbox.width / (char_count as f32);
+            self.text
+                .chars()
+                .enumerate()
+                .map(|(i, c)| TextChar {
+                    char: c,
+                    bbox: Rect::new(
+                        self.bbox.x + (i as f32) * char_width,
+                        self.bbox.y,
+                        char_width,
+                        self.bbox.height,
+                    ),
+                    font_name: self.font_name.clone(),
+                    font_size: self.font_size,
+                    font_weight: self.font_weight,
+                    is_italic: self.is_italic,
+                    is_monospace: self.is_monospace,
+                    color: self.color,
+                    mcid: self.mcid,
+                    origin_x: self.bbox.x + (i as f32) * char_width,
+                    origin_y: self.bbox.y,
+                    rotation_degrees: 0.0,
+                    advance_width: char_width,
+                    matrix: Some([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+                })
+                .collect()
+        }
     }
 }
 
@@ -127,8 +169,9 @@ impl TextSpan {
 /// - `advance_width`: Horizontal distance to next character
 /// - `matrix`: Full 6-element transformation matrix for advanced use cases
 ///
-/// These properties match industry standards (MuPDF, iText, PDFBox, pdfium-render).
+/// These properties match industry standards.
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(feature = "wasm", serde(rename_all = "camelCase"))]
 pub struct TextChar {
     /// The character itself
     pub char: char,
@@ -142,6 +185,8 @@ pub struct TextChar {
     pub font_weight: FontWeight,
     /// Font style: italic or normal
     pub is_italic: bool,
+    /// Whether the font is monospaced (from PDF font descriptor FixedPitch flag)
+    pub is_monospace: bool,
     /// Text color
     pub color: Color,
     /// Marked Content ID (for Tagged PDFs)
@@ -207,6 +252,7 @@ impl Default for TextChar {
             font_size: 12.0,
             font_weight: FontWeight::Normal,
             is_italic: false,
+            is_monospace: false,
             color: Color::black(),
             mcid: None,
             origin_x: 0.0,
@@ -281,6 +327,7 @@ impl TextChar {
             font_size,
             font_weight: FontWeight::Normal,
             is_italic: false,
+            is_monospace: false,
             color: Color::black(),
             mcid: None,
             origin_x: bbox.x,
@@ -379,8 +426,27 @@ impl Color {
     }
 }
 
+/// Complete text extraction result for a single page.
+///
+/// Single-call API that provides spans, per-character data, and page dimensions.
+/// The `chars` field is derived from spans via `TextSpan::to_chars()`, using
+/// font-metric widths when available for accurate per-glyph bounding boxes.
+#[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(feature = "wasm", serde(rename_all = "camelCase"))]
+pub struct PageText {
+    /// Text spans in reading order.
+    pub spans: Vec<TextSpan>,
+    /// Per-character data derived from spans (uses font metric widths when available).
+    pub chars: Vec<TextChar>,
+    /// Page width in PDF points.
+    pub page_width: f32,
+    /// Page height in PDF points.
+    pub page_height: f32,
+}
+
 /// A text block (word, line, or paragraph).
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(feature = "wasm", serde(rename_all = "camelCase"))]
 pub struct TextBlock {
     /// Characters in this block
     pub chars: Vec<TextChar>,
@@ -476,6 +542,7 @@ pub type Word = TextBlock;
 
 /// A line of text containing multiple words.
 #[derive(Debug, Clone, serde::Serialize)]
+#[cfg_attr(feature = "wasm", serde(rename_all = "camelCase"))]
 pub struct TextLine {
     /// Words in this line
     pub words: Vec<Word>,
@@ -524,6 +591,7 @@ mod tests {
             font_size: 12.0,
             font_weight: FontWeight::Normal,
             is_italic: false,
+            is_monospace: false,
             color: Color::black(),
             mcid: None,
             origin_x: bbox.x,
@@ -547,5 +615,102 @@ mod tests {
         let block = TextBlock::from_chars(chars);
         assert_eq!(block.text, "Hello");
         assert_eq!(block.avg_font_size, 12.0);
+    }
+
+    #[test]
+    fn test_text_span_is_monospace_default() {
+        let span = TextSpan::default();
+        assert!(!span.is_monospace, "Default spans should not be monospace");
+    }
+
+    #[test]
+    fn test_text_span_is_monospace_set() {
+        let span = TextSpan {
+            is_monospace: true,
+            text: "AB".to_string(),
+            bbox: Rect::new(0.0, 0.0, 20.0, 12.0),
+            ..TextSpan::default()
+        };
+        assert!(span.is_monospace);
+
+        // to_chars should propagate is_monospace
+        let chars = span.to_chars();
+        for c in &chars {
+            assert!(c.is_monospace, "TextChar should inherit is_monospace from span");
+        }
+    }
+
+    #[test]
+    fn test_text_char_is_monospace() {
+        let c = TextChar {
+            char: 'A',
+            bbox: Rect::new(0.0, 0.0, 10.0, 12.0),
+            font_name: "Courier".to_string(),
+            font_size: 12.0,
+            font_weight: FontWeight::Normal,
+            is_italic: false,
+            is_monospace: true,
+            color: Color::black(),
+            mcid: None,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            rotation_degrees: 0.0,
+            advance_width: 10.0,
+            matrix: None,
+        };
+        assert!(c.is_monospace);
+    }
+
+    #[test]
+    fn test_to_chars_uses_char_widths_when_available() {
+        let span = TextSpan {
+            text: "AB".to_string(),
+            bbox: Rect::new(10.0, 20.0, 30.0, 12.0),
+            char_widths: vec![10.0, 20.0],
+            ..TextSpan::default()
+        };
+        let chars = span.to_chars();
+        assert_eq!(chars.len(), 2);
+        // First char: x=10, width=10
+        assert!((chars[0].bbox.x - 10.0).abs() < 0.001);
+        assert!((chars[0].bbox.width - 10.0).abs() < 0.001);
+        assert!((chars[0].advance_width - 10.0).abs() < 0.001);
+        // Second char: x=20, width=20
+        assert!((chars[1].bbox.x - 20.0).abs() < 0.001);
+        assert!((chars[1].bbox.width - 20.0).abs() < 0.001);
+        assert!((chars[1].advance_width - 20.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_to_chars_falls_back_to_uniform_when_no_widths() {
+        let span = TextSpan {
+            text: "AB".to_string(),
+            bbox: Rect::new(10.0, 20.0, 30.0, 12.0),
+            // char_widths left empty (default)
+            ..TextSpan::default()
+        };
+        let chars = span.to_chars();
+        assert_eq!(chars.len(), 2);
+        // Uniform division: 30.0 / 2 = 15.0 each
+        assert!((chars[0].bbox.width - 15.0).abs() < 0.001);
+        assert!((chars[1].bbox.width - 15.0).abs() < 0.001);
+        assert!((chars[0].bbox.x - 10.0).abs() < 0.001);
+        assert!((chars[1].bbox.x - 25.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_to_chars_handles_mismatched_widths_gracefully() {
+        let span = TextSpan {
+            text: "ABC".to_string(),
+            bbox: Rect::new(0.0, 0.0, 30.0, 12.0),
+            char_widths: vec![5.0, 10.0], // only 2 widths for 3 chars
+            ..TextSpan::default()
+        };
+        let chars = span.to_chars();
+        assert_eq!(chars.len(), 3);
+        // Should fall back to uniform: 30.0 / 3 = 10.0 each
+        assert!((chars[0].bbox.width - 10.0).abs() < 0.001);
+        assert!((chars[1].bbox.width - 10.0).abs() < 0.001);
+        assert!((chars[2].bbox.width - 10.0).abs() < 0.001);
     }
 }

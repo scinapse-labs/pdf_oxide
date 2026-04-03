@@ -440,6 +440,7 @@ mod tests {
             font_name: "Arial".to_string(),
             font_weight: FontWeight::Normal,
             is_italic: false,
+            is_monospace: false,
             color: Color {
                 r: 0.0,
                 g: 0.0,
@@ -453,6 +454,7 @@ mod tests {
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             primary_detected: false,
+            char_widths: vec![],
         }
     }
 

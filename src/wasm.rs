@@ -528,12 +528,27 @@ impl WasmPdfDocument {
     ///
     /// Returns an array of objects with: text, bbox, font_name, font_size,
     /// font_weight, is_italic, color, etc.
+    ///
+    /// Optional `reading_order`: `"column_aware"` for XY-Cut column detection,
+    /// or `"top_to_bottom"` (default).
     #[wasm_bindgen(js_name = "extractSpans")]
     pub fn extract_spans(
         &mut self,
         page_index: usize,
         region: Option<Vec<f32>>,
+        reading_order: Option<String>,
     ) -> Result<JsValue, JsValue> {
+        let order = match reading_order.as_deref() {
+            Some("column_aware") => crate::document::ReadingOrder::ColumnAware,
+            Some("top_to_bottom") | None => crate::document::ReadingOrder::TopToBottom,
+            Some(other) => {
+                return Err(JsValue::from_str(&format!(
+                    "Unknown reading_order '{}'. Expected 'top_to_bottom' or 'column_aware'.",
+                    other
+                )));
+            },
+        };
+
         let mut inner = self
             .inner
             .lock()
@@ -548,12 +563,49 @@ impl WasmPdfDocument {
                 crate::layout::RectFilterMode::Intersects,
             )
         } else {
-            inner.extract_spans(page_index)
+            inner.extract_spans_with_reading_order(page_index, order)
         };
 
         let spans = spans_result
             .map_err(|e| JsValue::from_str(&format!("Failed to extract spans: {}", e)))?;
         serde_wasm_bindgen::to_value(&spans)
+            .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
+    }
+
+    /// Extract complete page text data in a single call.
+    ///
+    /// Returns `{ spans, chars, page_width, page_height }`.
+    /// The `chars` are derived from spans using font-metric widths when available.
+    ///
+    /// Optional `reading_order`: `"column_aware"` for XY-Cut column detection,
+    /// or `"top_to_bottom"` (default).
+    #[wasm_bindgen(js_name = "extractPageText")]
+    pub fn extract_page_text(
+        &mut self,
+        page_index: usize,
+        reading_order: Option<String>,
+    ) -> Result<JsValue, JsValue> {
+        let order = match reading_order.as_deref() {
+            Some("column_aware") => crate::document::ReadingOrder::ColumnAware,
+            Some("top_to_bottom") | None => crate::document::ReadingOrder::TopToBottom,
+            Some(other) => {
+                return Err(JsValue::from_str(&format!(
+                    "Unknown reading_order '{}'. Expected 'top_to_bottom' or 'column_aware'.",
+                    other
+                )));
+            },
+        };
+
+        let mut inner = self
+            .inner
+            .lock()
+            .map_err(|_| JsValue::from_str("Mutex lock failed"))?;
+
+        let page_text = inner
+            .extract_page_text_with_options(page_index, order)
+            .map_err(|e| JsValue::from_str(&format!("Failed to extract page text: {}", e)))?;
+
+        serde_wasm_bindgen::to_value(&page_text)
             .map_err(|e| JsValue::from_str(&format!("Serialization error: {}", e)))
     }
 
@@ -995,6 +1047,29 @@ impl WasmPdfDocument {
                     "operations_count".into(),
                     serde_json::Value::from(path.operations.len()),
                 );
+
+                let ops: Vec<serde_json::Value> = path
+                    .operations
+                    .iter()
+                    .map(|op| match op {
+                        crate::elements::PathOperation::MoveTo(x, y) => {
+                            serde_json::json!({"op": "move_to", "x": x, "y": y})
+                        }
+                        crate::elements::PathOperation::LineTo(x, y) => {
+                            serde_json::json!({"op": "line_to", "x": x, "y": y})
+                        }
+                        crate::elements::PathOperation::CurveTo(cx1, cy1, cx2, cy2, x, y) => {
+                            serde_json::json!({"op": "curve_to", "cx1": cx1, "cy1": cy1, "cx2": cx2, "cy2": cy2, "x": x, "y": y})
+                        }
+                        crate::elements::PathOperation::Rectangle(x, y, w, h) => {
+                            serde_json::json!({"op": "rectangle", "x": x, "y": y, "width": w, "height": h})
+                        }
+                        crate::elements::PathOperation::ClosePath => {
+                            serde_json::json!({"op": "close_path"})
+                        }
+                    })
+                    .collect();
+                obj.insert("operations".into(), serde_json::Value::Array(ops));
 
                 serde_json::Value::Object(obj)
             })
@@ -2529,6 +2604,20 @@ pub struct WasmPdf {
 
 #[wasm_bindgen]
 impl WasmPdf {
+    /// Open an existing PDF from bytes for editing.
+    ///
+    /// @param data - PDF file contents as Uint8Array
+    /// @returns WasmPdf for editing
+    #[wasm_bindgen(js_name = "fromBytes")]
+    pub fn from_bytes(data: &[u8]) -> Result<WasmPdf, JsValue> {
+        let mut pdf = crate::api::Pdf::from_bytes(data.to_vec())
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let bytes = pdf
+            .save_to_bytes()
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        Ok(WasmPdf { bytes })
+    }
+
     /// Merge multiple PDF byte arrays into a single PDF.
     ///
     /// @param pdfs - Array of Uint8Array, each containing a PDF

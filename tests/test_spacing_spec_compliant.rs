@@ -29,6 +29,7 @@ fn create_test_span(text: &str, x: f32, y: f32, width: f32, height: f32) -> Text
         font_size: height,
         font_weight: FontWeight::Normal,
         is_italic: false,
+        is_monospace: false,
         color: Color::black(),
         mcid: None,
         sequence: 0,
@@ -38,6 +39,7 @@ fn create_test_span(text: &str, x: f32, y: f32, width: f32, height: f32) -> Text
         word_spacing: 0.0,
         horizontal_scaling: 100.0,
         primary_detected: false,
+        char_widths: vec![],
     }
 }
 

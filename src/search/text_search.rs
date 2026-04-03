@@ -323,6 +323,7 @@ mod tests {
                 font_size: 12.0,
                 font_weight: crate::layout::FontWeight::Normal,
                 is_italic: false,
+                is_monospace: false,
                 color: crate::layout::Color {
                     r: 0.0,
                     g: 0.0,
@@ -336,6 +337,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -345,6 +347,7 @@ mod tests {
                 font_size: 12.0,
                 font_weight: crate::layout::FontWeight::Normal,
                 is_italic: false,
+                is_monospace: false,
                 color: crate::layout::Color {
                     r: 0.0,
                     g: 0.0,
@@ -358,6 +361,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 

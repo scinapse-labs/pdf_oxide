@@ -96,6 +96,9 @@ pub use crate::writer::{
     TextMarkupAnnotation, WatermarkAnnotation,
 };
 
+// Re-export reading order types
+pub use crate::document::ReadingOrder;
+
 // Re-export geometry types
 pub use crate::geometry::Rect;
 

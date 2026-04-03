@@ -153,6 +153,7 @@ impl From<TextContent> for TextSpan {
             font_size: content.font.size,
             font_weight: content.style.weight,
             is_italic: content.style.italic,
+            is_monospace: false,
             color: content.style.color,
             mcid: None,
             sequence: content.reading_order.unwrap_or(0),
@@ -163,6 +164,7 @@ impl From<TextContent> for TextSpan {
             horizontal_scaling: 100.0,
             primary_detected: false,
             artifact_type: content.artifact_type,
+            char_widths: vec![],
         }
     }
 }
@@ -316,6 +318,7 @@ mod tests {
             font_size: 12.0,
             font_weight: FontWeight::Bold,
             is_italic: false,
+            is_monospace: false,
             color: Color::black(),
             mcid: None,
             sequence: 3,
@@ -325,6 +328,7 @@ mod tests {
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             primary_detected: false,
+            char_widths: vec![],
         };
 
         let content: TextContent = span.into();
