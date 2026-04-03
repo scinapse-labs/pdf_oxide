@@ -54,6 +54,11 @@ pub struct TextSpan {
     pub primary_detected: bool,
     /// Artifact type classification for filtered content (PDF Spec Section 14.8.2.2)
     pub artifact_type: Option<ArtifactType>,
+    /// Per-character advance widths in user-space points.
+    /// When non-empty and matching text length, to_chars() uses these
+    /// for accurate per-glyph bounding boxes instead of uniform division.
+    #[serde(skip)]
+    pub char_widths: Vec<f32>,
 }
 
 impl Default for TextSpan {
@@ -76,6 +81,7 @@ impl Default for TextSpan {
             horizontal_scaling: 100.0,
             primary_detected: false,
             artifact_type: None,
+            char_widths: Vec::new(),
         }
     }
 }
@@ -88,32 +94,63 @@ impl TextSpan {
             return Vec::new();
         }
 
-        let char_width = self.bbox.width / (char_count as f32);
-        self.text
-            .chars()
-            .enumerate()
-            .map(|(i, c)| TextChar {
-                char: c,
-                bbox: Rect::new(
-                    self.bbox.x + (i as f32) * char_width,
-                    self.bbox.y,
-                    char_width,
-                    self.bbox.height,
-                ),
-                font_name: self.font_name.clone(),
-                font_size: self.font_size,
-                font_weight: self.font_weight,
-                is_italic: self.is_italic,
-                is_monospace: self.is_monospace,
-                color: self.color,
-                mcid: self.mcid,
-                origin_x: self.bbox.x + (i as f32) * char_width,
-                origin_y: self.bbox.y,
-                rotation_degrees: 0.0,
-                advance_width: char_width,
-                matrix: Some([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-            })
-            .collect()
+        // Use per-character widths when available and matching text length;
+        // otherwise fall back to uniform division (backward compatible).
+        if self.char_widths.len() == char_count {
+            let mut x = self.bbox.x;
+            self.text
+                .chars()
+                .enumerate()
+                .map(|(i, c)| {
+                    let w = self.char_widths[i];
+                    let char_x = x;
+                    x += w;
+                    TextChar {
+                        char: c,
+                        bbox: Rect::new(char_x, self.bbox.y, w, self.bbox.height),
+                        font_name: self.font_name.clone(),
+                        font_size: self.font_size,
+                        font_weight: self.font_weight,
+                        is_italic: self.is_italic,
+                        is_monospace: self.is_monospace,
+                        color: self.color,
+                        mcid: self.mcid,
+                        origin_x: char_x,
+                        origin_y: self.bbox.y,
+                        rotation_degrees: 0.0,
+                        advance_width: w,
+                        matrix: Some([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+                    }
+                })
+                .collect()
+        } else {
+            let char_width = self.bbox.width / (char_count as f32);
+            self.text
+                .chars()
+                .enumerate()
+                .map(|(i, c)| TextChar {
+                    char: c,
+                    bbox: Rect::new(
+                        self.bbox.x + (i as f32) * char_width,
+                        self.bbox.y,
+                        char_width,
+                        self.bbox.height,
+                    ),
+                    font_name: self.font_name.clone(),
+                    font_size: self.font_size,
+                    font_weight: self.font_weight,
+                    is_italic: self.is_italic,
+                    is_monospace: self.is_monospace,
+                    color: self.color,
+                    mcid: self.mcid,
+                    origin_x: self.bbox.x + (i as f32) * char_width,
+                    origin_y: self.bbox.y,
+                    rotation_degrees: 0.0,
+                    advance_width: char_width,
+                    matrix: Some([1.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+                })
+                .collect()
+        }
     }
 }
 
@@ -600,5 +637,58 @@ mod tests {
             matrix: None,
         };
         assert!(c.is_monospace);
+    }
+
+    #[test]
+    fn test_to_chars_uses_char_widths_when_available() {
+        let span = TextSpan {
+            text: "AB".to_string(),
+            bbox: Rect::new(10.0, 20.0, 30.0, 12.0),
+            char_widths: vec![10.0, 20.0],
+            ..TextSpan::default()
+        };
+        let chars = span.to_chars();
+        assert_eq!(chars.len(), 2);
+        // First char: x=10, width=10
+        assert!((chars[0].bbox.x - 10.0).abs() < 0.001);
+        assert!((chars[0].bbox.width - 10.0).abs() < 0.001);
+        assert!((chars[0].advance_width - 10.0).abs() < 0.001);
+        // Second char: x=20, width=20
+        assert!((chars[1].bbox.x - 20.0).abs() < 0.001);
+        assert!((chars[1].bbox.width - 20.0).abs() < 0.001);
+        assert!((chars[1].advance_width - 20.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_to_chars_falls_back_to_uniform_when_no_widths() {
+        let span = TextSpan {
+            text: "AB".to_string(),
+            bbox: Rect::new(10.0, 20.0, 30.0, 12.0),
+            // char_widths left empty (default)
+            ..TextSpan::default()
+        };
+        let chars = span.to_chars();
+        assert_eq!(chars.len(), 2);
+        // Uniform division: 30.0 / 2 = 15.0 each
+        assert!((chars[0].bbox.width - 15.0).abs() < 0.001);
+        assert!((chars[1].bbox.width - 15.0).abs() < 0.001);
+        assert!((chars[0].bbox.x - 10.0).abs() < 0.001);
+        assert!((chars[1].bbox.x - 25.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_to_chars_handles_mismatched_widths_gracefully() {
+        let span = TextSpan {
+            text: "ABC".to_string(),
+            bbox: Rect::new(0.0, 0.0, 30.0, 12.0),
+            char_widths: vec![5.0, 10.0], // only 2 widths for 3 chars
+            ..TextSpan::default()
+        };
+        let chars = span.to_chars();
+        assert_eq!(chars.len(), 3);
+        // Should fall back to uniform: 30.0 / 3 = 10.0 each
+        assert!((chars[0].bbox.width - 10.0).abs() < 0.001);
+        assert!((chars[1].bbox.width - 10.0).abs() < 0.001);
+        assert!((chars[2].bbox.width - 10.0).abs() < 0.001);
     }
 }

@@ -454,6 +454,7 @@ mod tests {
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             primary_detected: false,
+            char_widths: vec![],
         }
     }
 

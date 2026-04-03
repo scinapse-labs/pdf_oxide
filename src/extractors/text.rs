@@ -1287,6 +1287,8 @@ struct TjBuffer {
     is_italic: bool,
     /// Whether the font is monospaced (from FixedPitch flag or name heuristic).
     is_monospace: bool,
+    /// Per-character advance widths in text-space units (before user_h_scale).
+    char_widths: Vec<f32>,
     /// Pre-computed user-space position (CTM applied to text matrix origin).
     /// Avoids two transform_point calls per flush.
     user_pos_x: f32,
@@ -1342,6 +1344,7 @@ impl TjBuffer {
             font_weight,
             is_italic,
             is_monospace,
+            char_widths: Vec::new(),
             user_pos_x: user_pos.x,
             user_pos_y: user_pos.y,
             user_h_scale,
@@ -4767,6 +4770,14 @@ impl TextExtractor {
             is_monospace: false,
             primary_detected: false,
             artifact_type: self.current_artifact_type(),
+            char_widths: {
+                let mut cw = std::mem::take(&mut buffer.char_widths);
+                let h = buffer.user_h_scale;
+                for w in &mut cw {
+                    *w *= h;
+                }
+                cw
+            },
         };
         self.span_sequence_counter += 1;
 
@@ -5201,6 +5212,7 @@ impl TextExtractor {
             is_monospace: false,
             primary_detected: true,
             artifact_type: None,
+            char_widths: vec![],
         };
 
         // Step 6: Increment sequence counter and add to spans
@@ -5434,7 +5446,8 @@ impl TextExtractor {
                 let width_table = font.get_byte_to_width_table();
                 let mut w_sum = 0.0f32;
                 for &byte in text {
-                    // Unicode decode
+                    // Unicode decode — count chars added for per-char width tracking
+                    let len_before = buffer.unicode.len();
                     let c = char_table[byte as usize];
                     if c != '\0' {
                         buffer.unicode.push(c);
@@ -5466,6 +5479,16 @@ impl TextExtractor {
                         w += ws_hs;
                     }
                     w_sum += w;
+                    // Track per-character advance widths
+                    let chars_added = buffer.unicode.len() - len_before;
+                    if chars_added == 1 {
+                        buffer.char_widths.push(w);
+                    } else if chars_added > 1 {
+                        let per_char = w / chars_added as f32;
+                        for _ in 0..chars_added {
+                            buffer.char_widths.push(per_char);
+                        }
+                    }
                 }
                 w_sum
             } else {
@@ -5480,6 +5503,7 @@ impl TextExtractor {
                         w += ws_hs;
                     }
                     w_sum += w;
+                    buffer.char_widths.push(w);
                 }
                 w_sum
             }
@@ -5490,7 +5514,9 @@ impl TextExtractor {
             let space_w = default_w + ws_hs;
             let mut w_sum = 0.0f32;
             for &byte in text {
-                w_sum += if byte == 0x20 { space_w } else { default_w };
+                let w = if byte == 0x20 { space_w } else { default_w };
+                w_sum += w;
+                buffer.char_widths.push(w);
             }
             w_sum
         };
@@ -5535,6 +5561,7 @@ impl TextExtractor {
                 let width_table = font.get_byte_to_width_table();
                 let mut w_sum = 0.0f32;
                 for &byte in text {
+                    let len_before = buffer.unicode.len();
                     let c = char_table[byte as usize];
                     if c != '\0' {
                         buffer.unicode.push(c);
@@ -5562,6 +5589,15 @@ impl TextExtractor {
                         w += ws_hs;
                     }
                     w_sum += w;
+                    let chars_added = buffer.unicode.len() - len_before;
+                    if chars_added == 1 {
+                        buffer.char_widths.push(w);
+                    } else if chars_added > 1 {
+                        let per_char = w / chars_added as f32;
+                        for _ in 0..chars_added {
+                            buffer.char_widths.push(per_char);
+                        }
+                    }
                 }
                 w_sum
             } else {
@@ -5580,6 +5616,7 @@ impl TextExtractor {
                         w += ws_hs;
                     }
                     w_sum += w;
+                    buffer.char_widths.push(w);
                 }
                 w_sum
             }
@@ -5589,7 +5626,9 @@ impl TextExtractor {
             let space_w = default_w + ws_hs;
             let mut w_sum = 0.0f32;
             for &byte in text {
-                w_sum += if byte == 0x20 { space_w } else { default_w };
+                let w = if byte == 0x20 { space_w } else { default_w };
+                w_sum += w;
+                buffer.char_widths.push(w);
             }
             w_sum
         };
@@ -5667,6 +5706,7 @@ impl TextExtractor {
             is_monospace: false,
             primary_detected: false,
             artifact_type: self.current_artifact_type(),
+            char_widths: vec![],
         };
         self.span_sequence_counter += 1;
 
@@ -5750,6 +5790,14 @@ impl TextExtractor {
                     is_monospace: buffer.is_monospace,
                     primary_detected: false,
                     artifact_type: None,
+                    char_widths: {
+                        let mut cw = std::mem::take(&mut buffer.char_widths);
+                        let h = buffer.user_h_scale;
+                        for w in &mut cw {
+                            *w *= h;
+                        }
+                        cw
+                    },
                 };
                 self.span_sequence_counter += 1;
 
@@ -6486,6 +6534,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -6510,6 +6559,7 @@ mod tests {
                 char_spacing: 0.0,
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
+                char_widths: vec![],
             },
         ];
 
@@ -7932,6 +7982,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -7951,6 +8002,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -7999,6 +8051,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             });
         }
 
@@ -8171,6 +8224,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -8190,6 +8244,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -8223,6 +8278,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -8242,6 +8298,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -8280,6 +8337,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -8299,6 +8357,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -8330,6 +8389,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -8349,6 +8409,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -8368,6 +8429,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -10518,6 +10580,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -10537,6 +10600,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -10566,6 +10630,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -10585,6 +10650,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -10674,6 +10740,7 @@ mod tests {
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             primary_detected: false,
+            char_widths: vec![],
         }];
 
         extractor.split_fused_words();
@@ -10704,6 +10771,7 @@ mod tests {
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             primary_detected: false,
+            char_widths: vec![],
         }];
 
         extractor.split_fused_words();
@@ -10881,6 +10949,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -10900,6 +10969,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -10975,6 +11045,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -10994,6 +11065,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -11285,6 +11357,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -11304,6 +11377,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 
@@ -11419,6 +11493,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
             TextSpan {
                 artifact_type: None,
@@ -11438,6 +11513,7 @@ mod tests {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             },
         ];
 

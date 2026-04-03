@@ -40,6 +40,7 @@ fn make_span(text: &str, x: f32, y: f32, font_size: f32, weight: FontWeight) -> 
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             primary_detected: false,
+            char_widths: vec![],
         },
         0,
     )
@@ -73,6 +74,7 @@ fn make_span_with_color(
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             primary_detected: false,
+            char_widths: vec![],
         },
         0,
     )
@@ -106,6 +108,7 @@ fn make_span_italic(
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             primary_detected: false,
+            char_widths: vec![],
         },
         0,
     )

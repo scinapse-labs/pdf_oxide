@@ -3974,6 +3974,7 @@ impl PdfDocument {
                 word_spacing: 0.0,
                 horizontal_scaling: 100.0,
                 primary_detected: false,
+                char_widths: vec![],
             });
         }
 
@@ -6013,6 +6014,7 @@ impl PdfDocument {
                 word_spacing: 0.0,
                 horizontal_scaling: 1.0,
                 primary_detected: false,
+                char_widths: vec![],
             })
             .collect();
 
@@ -7042,6 +7044,7 @@ impl PdfDocument {
                 word_spacing: 0.0,
                 horizontal_scaling: 1.0,
                 primary_detected: false,
+                char_widths: vec![],
             })
             .collect();
 
@@ -9741,6 +9744,7 @@ mod tests {
             word_spacing: 0.0,
             horizontal_scaling: 100.0,
             primary_detected: false,
+            char_widths: vec![],
         }
     }
 
