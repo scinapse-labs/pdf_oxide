@@ -2598,15 +2598,18 @@ impl TextExtractor {
         let mut deduplicated = Vec::with_capacity(self.chars.len());
         let mut prev_y_rounded: Option<i32> = None;
         let mut prev_x: Option<f32> = None;
+        let mut prev_char: Option<char> = None;
 
         for ch in self.chars.iter() {
             let y_rounded = ch.bbox.y.round() as i32;
             let x = ch.bbox.x;
 
             // Check if this char overlaps with the previous one
-            let should_skip = if let (Some(prev_y), Some(prev_x_val)) = (prev_y_rounded, prev_x) {
-                // Same line and within 2pt horizontally
-                y_rounded == prev_y && (x - prev_x_val).abs() < 2.0
+            let should_skip = if let (Some(prev_y), Some(prev_x_val), Some(prev_ch)) =
+                (prev_y_rounded, prev_x, prev_char)
+            {
+                // Same character, same line, and within 2pt horizontally
+                ch.char == prev_ch && y_rounded == prev_y && (x - prev_x_val).abs() < 2.0
             } else {
                 false
             };
@@ -2615,6 +2618,7 @@ impl TextExtractor {
                 deduplicated.push(ch.clone());
                 prev_y_rounded = Some(y_rounded);
                 prev_x = Some(x);
+                prev_char = Some(ch.char);
             } else {
                 log::trace!(
                     "Deduplicating overlapping char '{}' at X={:.1}, Y={:.1} (too close to previous)",
@@ -7954,6 +7958,75 @@ mod tests {
         let mut extractor = TextExtractor::new();
         extractor.deduplicate_overlapping_chars();
         assert!(extractor.chars.is_empty());
+    }
+
+    #[test]
+    fn test_deduplicate_keeps_distinct_close_chars() {
+        // Issue #253: distinct characters close together should NOT be dropped
+        let mut extractor = TextExtractor::new();
+
+        let make_char = |c: char, x: f32| TextChar {
+            char: c,
+            bbox: Rect::new(x, 700.0, 6.0, 12.0),
+            font_name: "F1".to_string(),
+            font_size: 12.0,
+            font_weight: FontWeight::Normal,
+            color: Color::black(),
+            mcid: None,
+            is_italic: false,
+            is_monospace: false,
+            origin_x: x,
+            origin_y: 700.0,
+            rotation_degrees: 0.0,
+            advance_width: 6.0,
+            matrix: None,
+        };
+
+        // 't' at x=100, ' ' at x=105, 'r' at x=106.5 (within 2pt of ' ' but different char)
+        extractor.chars = vec![
+            make_char('t', 100.0),
+            make_char(' ', 105.0),
+            make_char('r', 106.5),
+        ];
+
+        extractor.deduplicate_overlapping_chars();
+        assert_eq!(
+            extractor.chars.len(),
+            3,
+            "Distinct characters close together must not be dropped"
+        );
+        assert_eq!(extractor.chars[0].char, 't');
+        assert_eq!(extractor.chars[1].char, ' ');
+        assert_eq!(extractor.chars[2].char, 'r');
+    }
+
+    #[test]
+    fn test_deduplicate_still_removes_same_char_duplicates() {
+        // Duplicate same character at nearly the same position should still be deduped
+        let mut extractor = TextExtractor::new();
+
+        let make_char = |c: char, x: f32| TextChar {
+            char: c,
+            bbox: Rect::new(x, 700.0, 6.0, 12.0),
+            font_name: "F1".to_string(),
+            font_size: 12.0,
+            font_weight: FontWeight::Normal,
+            color: Color::black(),
+            mcid: None,
+            is_italic: false,
+            is_monospace: false,
+            origin_x: x,
+            origin_y: 700.0,
+            rotation_degrees: 0.0,
+            advance_width: 6.0,
+            matrix: None,
+        };
+
+        extractor.chars = vec![make_char('A', 100.0), make_char('A', 100.5)];
+
+        extractor.deduplicate_overlapping_chars();
+        assert_eq!(extractor.chars.len(), 1, "Duplicate same char should still be deduped");
+        assert_eq!(extractor.chars[0].char, 'A');
     }
 
     // ========================================================================
