@@ -627,15 +627,19 @@ fn prescan_text_regions(data: &[u8]) -> Option<PrescanResult> {
         // inherit fonts from prior state get the correct Tf injected.
         let states = forward_scan_ctm(data, &text_positions)?;
 
-        // Build BT-based regions with their graphics state
+        // Build BT-based regions with their graphics state.
+        // Extend each region to include preceding BDC/BMC and following EMC
+        // so that marked-content operators are preserved in tagged PDFs.
         let mut ctm_regions: Vec<(usize, usize)> = Vec::new();
         for &tp in &text_positions {
+            let region_start = find_preceding_marked_content(data, tp);
             let region_end = if data[tp] == b'B' {
-                find_matching_et(data, tp + 2).unwrap_or(len)
+                let et_end = find_matching_et(data, tp + 2).unwrap_or(len);
+                find_following_emc(data, et_end)
             } else {
                 tp + 2
             };
-            ctm_regions.push((tp, region_end.min(len)));
+            ctm_regions.push((region_start, region_end.min(len)));
         }
 
         // Merge overlapping regions and track which state goes with each.
@@ -750,6 +754,59 @@ fn find_region_start(data: &[u8], pos: usize) -> (usize, bool) {
     // window that establish scaling transforms we're missing.
     let hit_limit = scan_start > 0;
     (best_q_pos, hit_limit)
+}
+
+/// Scan backward from `pos` to find any immediately preceding BDC/BMC operator.
+/// Returns the position of the BDC/BMC if found within 256 bytes, otherwise `pos`.
+fn find_preceding_marked_content(data: &[u8], pos: usize) -> usize {
+    let scan_start = pos.saturating_sub(256);
+    let mut i = pos;
+    while i > scan_start {
+        i -= 1;
+        // Look for 'C' which ends BDC or BMC
+        if data[i] == b'C'
+            && i >= 2
+            && data[i - 2] == b'B'
+            && (data[i - 1] == b'D' || data[i - 1] == b'M')
+        {
+            let op_start = i - 2;
+            // Verify operator boundary
+            let before_ok = op_start == 0 || !data[op_start - 1].is_ascii_alphanumeric();
+            let after_ok = i + 1 >= data.len() || !data[i + 1].is_ascii_alphanumeric();
+            if before_ok && after_ok {
+                // For BDC, scan further back to include the tag and properties dict
+                // e.g., "/Span << /MCID 0 >> BDC"
+                // Find the start of the line/command
+                let mut line_start = op_start;
+                while line_start > scan_start
+                    && data[line_start - 1] != b'\n'
+                    && data[line_start - 1] != b'\r'
+                {
+                    line_start -= 1;
+                }
+                return line_start;
+            }
+        }
+    }
+    pos
+}
+
+/// Scan forward from `pos` to find any immediately following EMC operator.
+/// Returns the position after the EMC if found within 256 bytes, otherwise `pos`.
+fn find_following_emc(data: &[u8], pos: usize) -> usize {
+    let scan_end = (pos + 256).min(data.len());
+    let mut i = pos;
+    while i + 2 < scan_end {
+        if data[i] == b'E' && data[i + 1] == b'M' && data[i + 2] == b'C' {
+            let before_ok = i == 0 || data[i - 1].is_ascii_whitespace();
+            let after_ok = i + 3 >= data.len() || data[i + 3].is_ascii_whitespace();
+            if before_ok && after_ok {
+                return i + 3;
+            }
+        }
+        i += 1;
+    }
+    pos
 }
 
 /// Find the position after matching "ET" for a BT starting at `start`.
@@ -5930,5 +5987,65 @@ mod tests {
         // Characters that don't start a valid operand
         assert!(skip_operand_token(b"").is_err());
         assert!(skip_operand_token(b"@").is_err());
+    }
+
+    #[test]
+    fn test_prescan_forward_ctm_preserves_marked_content() {
+        // Regression test: when prescan forward CTM builds regions starting at BT,
+        // preceding BDC/BMC operators must be preserved so tagged PDF structure
+        // (BDC ... BT ... ET ... EMC) is not broken.
+        let mut cs = Vec::new();
+
+        // Outer graphics state with a CTM transform
+        cs.extend_from_slice(b"q\n");
+        cs.extend_from_slice(b"1.5 0 0 1.5 50 50 cm\n");
+
+        // Filler to push beyond 256KB threshold
+        for i in 0..13000u32 {
+            let line = format!(
+                "{}.0 {}.0 m {}.0 {}.0 l n\n",
+                i % 500,
+                (i * 7) % 500,
+                (i * 3) % 500,
+                (i * 11) % 500
+            );
+            cs.extend_from_slice(line.as_bytes());
+        }
+        assert!(cs.len() > 256 * 1024);
+
+        // Tagged structure: BDC wrapping BT/ET, then EMC
+        cs.extend_from_slice(b"/Span << /MCID 0 >> BDC\n");
+        cs.extend_from_slice(b"BT\n");
+        cs.extend_from_slice(b"/F1 12 Tf\n");
+        cs.extend_from_slice(b"(Hello tagged) Tj\n");
+        cs.extend_from_slice(b"ET\n");
+        cs.extend_from_slice(b"EMC\n");
+
+        cs.extend_from_slice(b"Q\n");
+
+        let mut ops = Vec::new();
+        parse_and_execute_text_only(&cs, |op| {
+            ops.push(op);
+            Ok(())
+        })
+        .unwrap();
+
+        // Verify BeginMarkedContentDict is present in the output
+        let has_bdc = ops
+            .iter()
+            .any(|op| matches!(op, Operator::BeginMarkedContentDict { tag, .. } if tag == "Span"));
+        assert!(
+            has_bdc,
+            "BeginMarkedContentDict(/Span) must be preserved; got ops: {:?}",
+            ops.iter()
+                .map(|op| format!("{:?}", std::mem::discriminant(op)))
+                .collect::<Vec<_>>()
+        );
+
+        // Verify EndMarkedContent (EMC) is also present
+        let has_emc = ops
+            .iter()
+            .any(|op| matches!(op, Operator::EndMarkedContent));
+        assert!(has_emc, "EndMarkedContent (EMC) must be preserved in tagged PDF output");
     }
 }
