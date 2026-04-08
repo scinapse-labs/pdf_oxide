@@ -3606,7 +3606,7 @@ fn get_log_level() -> &'static str {
     }
 }
 
-#[pymodule]
+#[pymodule(gil_used = false)]
 fn pdf_oxide(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Bridge Rust `log` to Python `logging` (silent by default, user
     // configures with `logging.basicConfig(level=...)`). Fixes issue #280.
