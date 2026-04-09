@@ -4510,7 +4510,7 @@ impl TextExtractor {
             None => return Ok(()),
         };
 
-        if doc.xobject_text_free_cache.borrow().contains(&xobject_ref) {
+        if doc.xobject_text_free_cache.lock().unwrap().contains(&xobject_ref) {
             return Ok(());
         }
 
@@ -4524,7 +4524,7 @@ impl TextExtractor {
         // Span result cache: reuse extracted spans from self-contained Form XObjects.
         // Only works for XObjects with own /Resources (font context is self-contained).
         if self.extract_spans {
-            let cached_spans = { doc.xobject_spans_cache.borrow().get(&xobject_ref).cloned() };
+            let cached_spans = { doc.xobject_spans_cache.lock().unwrap().get(&xobject_ref).cloned() };
             if let Some(cached_spans) = cached_spans {
                 if let Some(spans) = cached_spans {
                     self.spans.extend(spans.iter().cloned());
@@ -4572,7 +4572,7 @@ impl TextExtractor {
                                     "Skipping Form XObject '{}': no Font/XObject in Resources",
                                     name
                                 );
-                                doc.xobject_text_free_cache.borrow_mut().insert(xobject_ref);
+                                doc.xobject_text_free_cache.lock().unwrap().insert(xobject_ref);
                                 return Ok(());
                             }
                         }
@@ -4588,7 +4588,7 @@ impl TextExtractor {
                 // Decode the stream — check cache first to avoid repeated FlateDecode.
                 self.xobject_decode_count += 1;
                 let cached_stream =
-                    { doc.xobject_stream_cache.borrow().get(&xobject_ref).cloned() };
+                    { doc.xobject_stream_cache.lock().unwrap().get(&xobject_ref).cloned() };
                 let stream_data = if let Some(cached) = cached_stream {
                     cached.as_ref().clone()
                 } else {
@@ -4596,13 +4596,12 @@ impl TextExtractor {
                         Ok(data) => {
                             // Cache if under 50MB total
                             const MAX_STREAM_CACHE_BYTES: usize = 50 * 1024 * 1024;
-                            if doc.xobject_stream_cache_bytes.get() + data.len()
-                                <= MAX_STREAM_CACHE_BYTES
-                            {
+                            let current = doc.xobject_stream_cache_bytes.load(std::sync::atomic::Ordering::Relaxed);
+                            if current + data.len() <= MAX_STREAM_CACHE_BYTES {
                                 doc.xobject_stream_cache_bytes
-                                    .set(doc.xobject_stream_cache_bytes.get() + data.len());
+                                    .store(current + data.len(), std::sync::atomic::Ordering::Relaxed);
                                 doc.xobject_stream_cache
-                                    .borrow_mut()
+                                    .lock().unwrap()
                                     .insert(xobject_ref, std::sync::Arc::new(data.clone()));
                             }
                             data
@@ -4624,7 +4623,7 @@ impl TextExtractor {
                         name,
                         stream_data.len()
                     );
-                    doc.xobject_text_free_cache.borrow_mut().insert(xobject_ref);
+                    doc.xobject_text_free_cache.lock().unwrap().insert(xobject_ref);
                     return Ok(());
                 }
 
@@ -4729,7 +4728,7 @@ impl TextExtractor {
                         None
                     };
                     doc.xobject_spans_cache
-                        .borrow_mut()
+                        .lock().unwrap()
                         .insert(xobject_ref, new_spans);
                 }
 

@@ -28,7 +28,7 @@ use crate::writer::{BlendMode as RustBlendMode, LineCap as RustLineCap, LineJoin
 /// Python wrapper for PdfDocument.
 ///
 /// Provides PDF parsing, text extraction, and format conversion capabilities.
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "PdfDocument", unsendable)]
+#[pyclass(module = "pdf_oxide.pdf_oxide", name = "PdfDocument")]
 pub struct PyPdfDocument {
     pub(crate) inner: RustPdfDocument,
     pub(crate) path: Option<String>,
@@ -1725,7 +1725,7 @@ impl PyPdfDocument {
 }
 
 /// A form field extracted from a PDF AcroForm.
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "FormField", unsendable)]
+#[pyclass(module = "pdf_oxide.pdf_oxide", name = "FormField")]
 pub struct PyFormField {
     inner: RustFormField,
 }
@@ -2164,7 +2164,7 @@ impl PyPdfPageRegion {
     }
 }
 
-#[pyclass(module = "pdf_oxide.pdf_oxide", name = "PdfPage", unsendable)]
+#[pyclass(module = "pdf_oxide.pdf_oxide", name = "PdfPage")]
 pub struct PyPdfPage {
     inner: RustPdfPage,
 }
