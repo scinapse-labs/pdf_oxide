@@ -1204,11 +1204,18 @@ mod indexed_tests {
 
     #[test]
     fn expand_indexed_rejects_output_over_cap() {
-        // 12 000 × 12 000 × 3 = 432 MB > 256 MB guard. Stream is honestly
-        // sized for 12 000 × 12 000 but should still fail the size guard.
+        // 12 000 × 12 000 × 3 = 432 MB > 256 MB guard. The MAX_INDEXED_OUTPUT_BYTES
+        // check fires before we inspect `raw.len()`, so the test doesn't need to
+        // allocate a 144 MB stream — an empty buffer is enough to prove the cap
+        // rejects the request.
         let palette = vec![0, 0, 0];
-        let raw = vec![0; 12_000 * 12_000];
+        let raw: Vec<u8> = Vec::new();
         let result = expand_indexed_to_rgb(&raw, &palette, PixelFormat::RGB, 12_000, 12_000, 8);
         assert!(result.is_err(), "oversized output must be rejected");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("guard limit") || err.contains("exceeds"),
+            "expected output-size guard error, got: {err}"
+        );
     }
 }
