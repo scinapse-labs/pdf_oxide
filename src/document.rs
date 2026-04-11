@@ -703,10 +703,45 @@ impl PdfDocument {
     /// or `Ok(true)` if the PDF is not encrypted (no authentication needed).
     pub fn authenticate(&self, password: &[u8]) -> Result<bool> {
         self.ensure_encryption_initialized()?;
-        match self.encryption_handler.lock().unwrap().as_mut() {
+        // Capture current authentication state *before* calling the
+        // handler so we can detect the transition from "not authenticated"
+        // to "authenticated" and invalidate the object cache accordingly.
+        // Any objects loaded and cached before successful authentication
+        // still hold ciphertext strings (see `load_uncompressed_object_impl`
+        // at the `handler.is_authenticated()` guard), so a cache hit after
+        // authentication would return those stale values forever — issue
+        // #323.
+        let was_authenticated = self
+            .encryption_handler
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|h| h.is_authenticated())
+            .unwrap_or(true);
+
+        let result = match self.encryption_handler.lock().unwrap().as_mut() {
             Some(handler) => handler.authenticate(password),
-            None => Ok(true), // Not encrypted, always "authenticated"
+            None => return Ok(true), // Not encrypted, always "authenticated"
+        };
+
+        if let Ok(true) = result {
+            if !was_authenticated {
+                // Transitioned from "encrypted, not authenticated" to
+                // "authenticated". Drop every cached object so subsequent
+                // `load_object` calls re-parse through the path that now
+                // runs `decrypt_strings_in_object` on the uncompressed
+                // string values. The `/Encrypt` dictionary is not in this
+                // cache path (it is resolved independently), so clearing
+                // is always safe.
+                self.object_cache.lock().unwrap().clear();
+                log::debug!(
+                    "authenticate(): object cache cleared after successful authentication \
+                     to force re-decryption of any pre-auth cached objects (#323)"
+                );
+            }
         }
+
+        result
     }
 
     /// Check if the PDF is encrypted.
