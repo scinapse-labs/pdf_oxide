@@ -1137,6 +1137,10 @@ jobs:
           WORK="$(mktemp -d)"
           cd "$WORK"
           npm init -y
+          # Wait for npm registry propagation (v0.3.29 verify ran
+          # 0.5s after publish before the registry had synced)
+          echo "Waiting 90s for npm registry propagation..."
+          sleep 90
           time npm install "pdf-oxide@${VERSION}"
           cat > test.mjs <<'EOT'
           import { Pdf, PdfDocument } from 'pdf-oxide';
