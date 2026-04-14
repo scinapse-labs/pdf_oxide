@@ -178,3 +178,37 @@ fn genuinely_free_object_still_treated_as_null() {
     let mut doc = PdfDocument::from_bytes(pdf).expect("open PDF with real free slot");
     assert_eq!(doc.page_count().expect("page count"), 1);
 }
+
+// ---------------------------------------------------------------------------
+// Test 4: second corruption shape — xref marks object `n` (in-use) but
+// points at a byte offset a few bytes BEFORE the real `N G obj` header.
+// This happened in the SEBI report PDF for roughly a fifth of the page
+// objects: the `endobj` keyword of the previous object was included in the
+// xref offset, so the parser read `j\r\n545 0 obj` and rejected `j` as an
+// object number. The fix re-queries `scan_for_object` on header parse
+// failure and retries at the scan-reported offset.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn xref_offset_off_by_a_few_bytes_recovers_via_scan() {
+    let (mut pdf, offsets) = build_two_page_pdf();
+    // Corrupt the xref entry for obj 4 (page 2) by shifting its offset
+    // back into the previous object's `endobj` tail. The body offset is
+    // still the real `4 0 obj` header, but the xref points ~6 bytes
+    // earlier — the exact pattern observed in the field.
+    let mut entries: Vec<(usize, bool)> = offsets.iter().map(|&o| (o, true)).collect();
+    let real_off = entries[4].0;
+    entries[4].0 = real_off.saturating_sub(6);
+    append_xref(&mut pdf, &entries);
+
+    let mut doc = PdfDocument::from_bytes(pdf).expect("open PDF with shifted xref");
+    assert_eq!(doc.page_count().expect("page count"), 2);
+
+    let t2 = doc
+        .extract_text(1)
+        .expect("page 2 must load via scan-based offset correction");
+    assert!(t2.contains("page two"), "recovered page 2 text: {t2:?}");
+
+    let t1 = doc.extract_text(0).expect("page 1 baseline");
+    assert!(t1.contains("page one"), "page 1 text: {t1:?}");
+}

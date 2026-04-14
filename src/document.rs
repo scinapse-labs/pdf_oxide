@@ -2061,12 +2061,34 @@ impl PdfDocument {
 
         let _obj_pos = obj_pos;
 
-        // Parse the object number and generation from header
-        let obj_num: u32 = parts[0].parse().map_err(|_| Error::ParseError {
+        // Parse the object number and generation from header. If either
+        // fails to parse as a number, the xref-reported offset is pointing
+        // into the middle of a previous object's tail (e.g. xref says 12345
+        // but the real `N G obj` header starts at 12348 because three bytes
+        // of CR/LF/terminator got mis-accounted for by the producer — a
+        // pattern seen in the wild). Fall back to the whole-file scan
+        // cache: if scan recorded a different offset for this id, retry
+        // from there before giving up.
+        let obj_num_parsed = parts[0].parse::<u32>();
+        let gen_num_parsed = parts[1].parse::<u16>();
+        if !already_corrected && (obj_num_parsed.is_err() || gen_num_parsed.is_err()) {
+            if let Ok(scan_offset) = self.scan_for_object(obj_ref) {
+                if scan_offset != offset {
+                    log::debug!(
+                        "Header parse failed at xref offset {} (parts[0]={:?}); retrying at scan-reported offset {}",
+                        offset,
+                        parts[0],
+                        scan_offset
+                    );
+                    return self.load_uncompressed_object_impl(obj_ref, scan_offset, true);
+                }
+            }
+        }
+        let obj_num: u32 = obj_num_parsed.map_err(|_| Error::ParseError {
             offset: offset as usize,
             reason: format!("Invalid object number in header: {}", parts[0]),
         })?;
-        let gen_num: u16 = parts[1].parse().map_err(|_| Error::ParseError {
+        let gen_num: u16 = gen_num_parsed.map_err(|_| Error::ParseError {
             offset: offset as usize,
             reason: format!("Invalid generation number in header: {}", parts[1]),
         })?;
