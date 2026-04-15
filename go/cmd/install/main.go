@@ -15,7 +15,9 @@
 //	-env-only      Skip download; only print env vars for an existing install
 //
 // Design mirrors Kreuzberg's installer:
-//   https://github.com/kreuzberg-dev/kreuzberg/blob/main/packages/go/v4/cmd/install/main.go
+//
+//	https://github.com/kreuzberg-dev/kreuzberg/blob/main/packages/go/v4/cmd/install/main.go
+//
 // Security posture: validates version format, constructs URL from a hard-coded
 // base, enforces max-size on download + extraction, rejects path traversal.
 package main
