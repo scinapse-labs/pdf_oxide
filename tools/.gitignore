@@ -1,0 +1,4 @@
+# Benchmark-harness lives on feat/benchmark-harness and fix/b1-b3-b4-*
+# branches. Bug-fix branches off release/v0.3.31 may clone its corpus
+# for local validation but must not commit it.
+benchmark-harness/
