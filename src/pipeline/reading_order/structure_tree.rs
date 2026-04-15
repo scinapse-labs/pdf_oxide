@@ -64,7 +64,7 @@ fn mcid_order_zigzags_columns(spans: &[TextSpan], mcid_order: &[u32]) -> bool {
     // 1-D k-means-lite: detect if there are 2+ clusters of X positions
     // separated by a meaningful gap.
     let mut xs_sorted: Vec<f32> = ordered_x.clone();
-    xs_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    xs_sorted.sort_by(|a, b| crate::utils::safe_float_cmp(*a, *b));
     let x_min = xs_sorted[0];
     let x_max = xs_sorted[xs_sorted.len() - 1];
     let x_extent = x_max - x_min;

@@ -264,7 +264,7 @@ fn detect_page_columns(spans: &[TextSpan]) -> Vec<(f32, f32)> {
         .iter()
         .map(|s| s.bbox.x + s.bbox.width * 0.5)
         .collect();
-    x_centers.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    x_centers.sort_by(|a, b| crate::utils::safe_float_cmp(*a, *b));
     let median_x = x_centers[x_centers.len() / 2];
 
     let mut page_x_min = f32::MAX;
@@ -2702,7 +2702,7 @@ fn detect_tables_from_horizontal_rules(
             y_coords.push(e.coord);
         }
     }
-    y_coords.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal)); // descending (top first in PDF coords)
+    y_coords.sort_by(|a, b| crate::utils::safe_float_cmp(*b, *a)); // descending (top first in PDF coords)
 
     if y_coords.len() < 2 {
         return Vec::new();

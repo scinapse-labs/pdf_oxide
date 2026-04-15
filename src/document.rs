@@ -1769,7 +1769,7 @@ impl PdfDocument {
         // Most populous column, used for anchor Y lookups regardless.
         let dense_col = &columns[col_order[0]];
         let mut dense_ys: Vec<f32> = dense_col.iter().map(|&i| spans[i].bbox.y).collect();
-        dense_ys.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        dense_ys.sort_by(|a, b| crate::utils::safe_float_cmp(*b, *a));
 
         // Compute the set of Y bands that count as "data". When several
         // dense columns are available, require a band to have support in
@@ -3976,8 +3976,7 @@ impl PdfDocument {
                     .collect();
             // Sort descending by top-Y so `pop()` returns the next table
             // to emit in reading order (larger Y first).
-            pending_tables
-                .sort_by(|(a, _), (b, _)| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+            pending_tables.sort_by(|(a, _), (b, _)| crate::utils::safe_float_cmp(*b, *a));
 
             let flush_table =
                 |text: &mut String, table: &crate::structure::table_extractor::ExtractedTable| {
