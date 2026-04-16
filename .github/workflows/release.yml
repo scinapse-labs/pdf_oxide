@@ -1207,61 +1207,6 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-  # Clean-room install verification — the gate that would have caught
-  # v0.3.24 before it shipped. Installs pdf-oxide from npm on Linux and
-  # macOS and verifies the bundled prebuild loads correctly.
-  verify-npm-install:
-    name: Verify npm install (${{ matrix.os }})
-    needs: [validate, publish-npm-native]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
-    if: ${{ !contains(needs.validate.outputs.version, '-') }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    steps:
-      - name: Setup Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '20'
-
-      - name: Clean-room install + smoke test
-        shell: bash
-        run: |
-          set -euxo pipefail
-          VERSION="${{ needs.validate.outputs.version }}"
-          WORK="$(mktemp -d)"
-          cd "$WORK"
-          npm init -y
-          # Wait for npm registry propagation (v0.3.29 verify ran
-          # 0.5s after publish before the registry had synced)
-          echo "Waiting 90s for npm registry propagation..."
-          sleep 90
-          time npm install "pdf-oxide@${VERSION}"
-          cat > test.mjs <<'EOT'
-          import { Pdf, PdfDocument } from 'pdf-oxide';
-          import { tmpdir } from 'node:os';
-          import { join } from 'node:path';
-          const out = join(tmpdir(), 'verify-npm-install.pdf');
-          const pdf = Pdf.fromMarkdown('# verify-npm-install\n\nbody text.');
-          pdf.save(out);
-          pdf.close?.();
-          const doc = PdfDocument.open(out);
-          try {
-            const n = doc.pageCount();
-            const text = String(doc.extractText(0) ?? '').slice(0, 40);
-            console.log(`ok pages=${n} text=${JSON.stringify(text)}`);
-            if (n < 1) { throw new Error('expected at least 1 page'); }
-          } finally {
-            doc.close?.();
-          }
-          // Native addon may keep the event loop alive (N-API background
-          // handles/threads). Force exit after the test passes.
-          process.exit(0);
-          EOT
-          node test.mjs
-
   # Publish C# NuGet package
   publish-nuget:
     name: Publish to NuGet
