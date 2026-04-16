@@ -2,6 +2,12 @@
 
 All notable changes to PDFOxide are documented here.
 
+## [0.3.32] - 2026-04-15
+
+### Release pipeline
+
+- **Fix `x86_64-pc-windows-gnu` native-lib build failing the v0.3.31 release.** The new `scripts/shrink-staticlib.sh` introduced in v0.3.31 ran `objcopy --strip-debug` on every archive member. The MinGW cross-compile toolchain emits split-debug `.dwo` members that contain *only* DWARF sections; after stripping those sections the member has no sections left and objcopy aborted the whole archive with `'...rcgu.dwo' has no sections`, failing the job that produces the Go Windows-x64 FFI tarball. Fix: drop `.dwo` archive members via `ar d` before invoking `objcopy`. No functional change to Rust, Python, Node, WASM, or C# artifacts — those built and uploaded successfully in v0.3.31; this release exists solely to unblock the Windows-x64 Go install path.
+
 ## [0.3.31] - 2026-04-15
 
 ### Text extraction correctness
