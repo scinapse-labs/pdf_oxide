@@ -4,7 +4,7 @@
 //
 // Usage:
 //
-//	go run github.com/yfedoseev/pdf_oxide/go/cmd/install@v0.3.31
+//	go run github.com/yfedoseev/pdf_oxide/go/cmd/install@v0.3.32
 //
 // Flags:
 //
@@ -50,7 +50,7 @@ const (
 	// taken from the build info and THIS constant is irrelevant. That's what
 	// lets `@latest` just work — each tagged release resolves to its own
 	// version automatically, without a sed step in release automation.
-	fallbackVersion   = "0.3.31"
+	fallbackVersion   = "0.3.32"
 	BaseURL           = "https://github.com/yfedoseev/pdf_oxide/releases/download"
 	DefaultInstallDir = ".pdf_oxide"
 	dirPerm           = 0o750
@@ -61,7 +61,7 @@ const (
 )
 
 // resolveVersion returns the module version baked in by `go run ...@<tag>`.
-// `debug.ReadBuildInfo()` reports Main.Version as "v0.3.31" for that path,
+// `debug.ReadBuildInfo()` reports Main.Version as "v0.3.32" for that path,
 // "(devel)" for local builds inside the checkout, or "" when build info is
 // missing entirely. We strip the leading "v" so the rest of the code can
 // treat version as a plain semver string.
@@ -132,7 +132,7 @@ func main() {
 }
 
 func run() error {
-	version := flag.String("version", resolveVersion(), "Version to download (semver, e.g. 0.3.31). Defaults to the installer's own module version — so `go run ...@latest` and `go run ...@v0.3.31` both just work.")
+	version := flag.String("version", resolveVersion(), "Version to download (semver, e.g. 0.3.32). Defaults to the installer's own module version — so `go run ...@latest` and `go run ...@v0.3.32` both just work.")
 	installDir := flag.String("dir", "", "Install directory (default: $HOME/.pdf_oxide)")
 	writeFlagsDir := flag.String("write-flags", "", "Directory in which to write cgo_flags.go (default: empty — just print env vars)")
 	envOnly := flag.Bool("env-only", false, "Skip download; print env vars for an existing install")
@@ -202,7 +202,7 @@ func staticlibName(platform string) string {
 
 func downloadAndExtract(version, assetSuffix, targetDir string, verifyChecksum bool) error {
 	if !versionRegex.MatchString(version) {
-		return fmt.Errorf("invalid version %q (expected semver like 0.3.31)", version)
+		return fmt.Errorf("invalid version %q (expected semver like 0.3.32)", version)
 	}
 	assetName := "pdf_oxide-go-ffi-" + assetSuffix + ".tar.gz"
 	baseURL := BaseURL + "/v" + version + "/"

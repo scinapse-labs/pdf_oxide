@@ -31,6 +31,19 @@ case "$(uname -s)" in
     # GNU binutils path. objcopy handles archives: it iterates members and
     # applies the operation to each, then rewrites the archive in place.
     if command -v objcopy >/dev/null 2>&1; then
+      # Split-debug `.dwo` archive members (emitted by the mingw cross-compile
+      # toolchain on x86_64-pc-windows-gnu) contain *only* DWARF sections.
+      # `objcopy --strip-debug` removes their only sections and then aborts
+      # the whole archive with "has no sections". Drop these members first so
+      # objcopy has nothing debug-only left to process.
+      if command -v ar >/dev/null 2>&1; then
+        mapfile -t dwo_members < <(ar t "$LIB" 2>/dev/null | grep -E '\.dwo$' || true)
+        if [[ ${#dwo_members[@]} -gt 0 ]]; then
+          for m in "${dwo_members[@]}"; do
+            ar d "$LIB" "$m" || true
+          done
+        fi
+      fi
       # llvm-objcopy rejects "same input and output" on some distros; write to
       # a sibling tmp file and move it into place atomically.
       tmp="${LIB}.shrink.tmp"
