@@ -67,7 +67,7 @@ All notable changes to PDFOxide are documented here.
 
 ### Thanks
 
-Issues reported or features requested by: [@Goldziher](https://github.com/Goldziher) (#320 benchmark harness), [@ddxtanx](https://github.com/ddxtanx) (#346 sort-order panic, #354 memory leak on page 12), [@frederikhors](https://github.com/frederikhors) (#325 rendering regression), [@Charltsing](https://github.com/Charltsing) (#344 CMYK JPEGs), [@FireMasterK](https://github.com/FireMasterK) (#345 page-scan failures), [@Jeevaanandh](https://github.com/Jeevaanandh) (#353 yanked libflate dep). PR reviews by GitHub Copilot surfaced real bugs in MediaBox coordinate handling and first-seen-page tracking that would otherwise have shipped.
+Issues reported or features requested by: [@Goldziher](https://github.com/Goldziher) (#320 benchmark harness), [@ddxtanx](https://github.com/ddxtanx) (#346 sort-order panic, #354 memory leak on page 12), [@frederikhors](https://github.com/frederikhors) (#325 rendering regression), [@Charltsing](https://github.com/Charltsing) (#344 CMYK JPEGs), [@FireMasterK](https://github.com/FireMasterK) (#345 page-scan failures), [@Jeevaanandh](https://github.com/Jeevaanandh) (#353 yanked libflate dep).
 
 ## [0.3.27] - 2026-04-12
 
