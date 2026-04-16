@@ -9,6 +9,36 @@ use byteorder::{BigEndian, ReadBytesExt};
 use std::collections::HashMap;
 use std::io::Cursor;
 
+/// Mac Roman (platform 1, encoding 0) high-half → Unicode mapping.
+///
+/// Bytes 0x00..0x7F are identical to ASCII and are handled by the caller.
+/// This table covers 0x80..0xFF per Apple's Mac Roman → Unicode reference.
+#[rustfmt::skip]
+const MAC_ROMAN_HIGH: [char; 128] = [
+    'Ä', 'Å', 'Ç', 'É', 'Ñ', 'Ö', 'Ü', 'á',
+    'à', 'â', 'ä', 'ã', 'å', 'ç', 'é', 'è',
+    'ê', 'ë', 'í', 'ì', 'î', 'ï', 'ñ', 'ó',
+    'ò', 'ô', 'ö', 'õ', 'ú', 'ù', 'û', 'ü',
+    '†', '°', '¢', '£', '§', '•', '¶', 'ß',
+    '®', '©', '™', '´', '¨', '≠', 'Æ', 'Ø',
+    '∞', '±', '≤', '≥', '¥', 'µ', '∂', '∑',
+    '∏', 'π', '∫', 'ª', 'º', 'Ω', 'æ', 'ø',
+    '¿', '¡', '¬', '√', 'ƒ', '≈', '∆', '«',
+    '»', '…', '\u{00A0}', 'À', 'Ã', 'Õ', 'Œ', 'œ',
+    '–', '—', '"', '"', '\'', '\'', '÷', '◊',
+    'ÿ', 'Ÿ', '⁄', '€', '‹', '›', 'ﬁ', 'ﬂ',
+    '‡', '·', '‚', '„', '‰', 'Â', 'Ê', 'Á',
+    'Ë', 'È', 'Í', 'Î', 'Ï', 'Ì', 'Ó', 'Ô',
+    '\u{F8FF}', 'Ò', 'Ú', 'Û', 'Ù', 'ı', 'ˆ', '˜',
+    '¯', '˘', '˙', '˚', '¸', '˝', '˛', 'ˇ',
+];
+
+#[inline]
+fn mac_roman_to_unicode(byte: u8) -> char {
+    debug_assert!(byte >= 0x80);
+    MAC_ROMAN_HIGH[(byte - 0x80) as usize]
+}
+
 /// Represents a TrueType cmap table extracted from an embedded font
 #[derive(Debug, Clone)]
 pub struct TrueTypeCMap {
@@ -197,8 +227,9 @@ impl TrueTypeCMap {
 
     /// Parse cmap format 0 (legacy 1-byte indexed, Mac Roman era).
     ///
-    /// Structure per Apple TrueType reference:
-    ///   u16 length       (260: 6 header + 256 glyphIds)
+    /// Structure per Apple TrueType reference (subtable length 262):
+    ///   u16 format       (already read by caller — 2 bytes)
+    ///   u16 length       (262: 2+2+2+256)
     ///   u16 language
     ///   u8  glyphIdArray[256]   — glyphId for each byte code 0..255
     ///
@@ -228,13 +259,16 @@ impl TrueTypeCMap {
             if gid == 0 {
                 continue;
             }
-            // The character code is the byte index. For the Mac Roman
-            // platform encoding (1, 0) we ideally map 0x80+ through the
-            // Mac Roman table, but for PDF text extraction the byte code
-            // itself is what the content stream uses, so storing it
-            // directly is correct for ASCII (0..127) and conservatively
-            // correct for the high half — better than no mapping at all.
-            if let Some(ch) = char::from_u32(byte as u32) {
+            // ASCII pass-through for 0x00..0x7F (Mac Roman lower half is
+            // identical to ASCII). Above 0x7F we route through the Mac
+            // Roman → Unicode table so byte 0x8A (a-umlaut in Mac Roman)
+            // maps to U+00E4 instead of U+008A.
+            let ch = if byte < 0x80 {
+                char::from_u32(byte as u32)
+            } else {
+                Some(mac_roman_to_unicode(byte as u8))
+            };
+            if let Some(ch) = ch {
                 gid_to_unicode.insert(gid as u16, ch);
             }
         }
@@ -807,6 +841,24 @@ mod tests {
     }
 
     #[test]
+    fn test_cmap_format0_mac_roman_high_half() {
+        // Byte 0x8A in Mac Roman is 'ä' (U+00E4), not raw 0x8A.
+        let mut gids = [0u8; 256];
+        gids[0x41] = 10; // 'A' — ASCII pass-through
+        gids[0x8A] = 20; // 'ä' via Mac Roman table
+        gids[0xA5] = 30; // '•' bullet via Mac Roman
+        let data = build_truetype_with_cmap_format0(gids);
+        let cmap = TrueTypeCMap::from_font_data(&data).expect("format 0 parse");
+        assert_eq!(cmap.get_unicode(10), Some('A'));
+        assert_eq!(
+            cmap.get_unicode(20),
+            Some('ä'),
+            "Mac Roman 0x8A must map to U+00E4 (a-umlaut), not raw 0x8A"
+        );
+        assert_eq!(cmap.get_unicode(30), Some('•'));
+    }
+
+    #[test]
     fn test_cmap_format0_rejects_truncated() {
         // 256-byte array but declared length wrong → truncated.
         let mut data = Vec::new();
@@ -826,9 +878,11 @@ mod tests {
         data.write_u16::<BigEndian>(0).unwrap();
         data.write_u32::<BigEndian>(4 + 8).unwrap();
         data.write_u16::<BigEndian>(0).unwrap(); // format
+                                                 // Declare the correct length (262) but only append 8 bytes of
+                                                 // glyphIdArray instead of 256 — parser should detect the
+                                                 // truncation via read_exact.
         data.write_u16::<BigEndian>(262).unwrap();
         data.write_u16::<BigEndian>(0).unwrap();
-        // only 8 bytes of glyphIdArray instead of 256
         data.extend_from_slice(&[0u8; 8]);
         let result = TrueTypeCMap::from_font_data(&data);
         assert!(result.is_err());

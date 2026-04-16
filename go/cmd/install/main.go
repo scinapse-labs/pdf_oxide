@@ -264,9 +264,20 @@ func httpGetLimited(url string) ([]byte, error) {
 		return nil, fmt.Errorf("asset too large: %d bytes", resp.ContentLength)
 	}
 
+	// Read up to maxExtractSize*2 + 1 so we can detect overflow — a
+	// chunked-encoded response reports no Content-Length, so the length
+	// pre-check above is a no-op for chunked servers. If the body hits the
+	// limit we can't distinguish "exactly the limit" from "more than the
+	// limit"; erring on the side of rejection is safe because legitimate
+	// FFI tarballs are well under the limit.
+	limit := int64(maxExtractSize) * 2
 	buf := new(bytes.Buffer)
-	if _, err := io.Copy(buf, io.LimitReader(resp.Body, maxExtractSize*2)); err != nil {
+	n, err := io.Copy(buf, io.LimitReader(resp.Body, limit+1))
+	if err != nil {
 		return nil, fmt.Errorf("read body: %w", err)
+	}
+	if n > limit {
+		return nil, fmt.Errorf("asset too large: exceeded %d bytes", limit)
 	}
 	return buf.Bytes(), nil
 }
